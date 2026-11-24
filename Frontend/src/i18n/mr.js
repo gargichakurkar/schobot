@@ -1,0 +1,16 @@
+export default {
+  deadlineLabel: "अंतिम तारीख",
+  milestonesTitle: "महत्त्वाचे टप्पे",
+  reminderTitle: "स्मरणपत्रे",
+  reminderEnable: "या शिष्यवृत्तीसाठी स्मरणपत्रे सुरू करा",
+  reminderChannel: "स्मरणपत्राचा मार्ग",
+  upcomingDeadlines: "आगामी अंतिम तारखा",
+  eligibleCount: "पात्र शिष्यवृत्ती",
+  studentLabel: "विद्यार्थी",
+  courseLabel: "अभ्यासक्रम",
+  categoryLabel: "प्रवर्ग",
+  domicileLabel: "अधिवास",
+  incomeLabel: "वार्षिक कौटुंबिक उत्पन्न",
+  educationLabel: "शिक्षण स्तर",
+  viewDetails: "तपशील पहा",
+};

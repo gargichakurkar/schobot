@@ -1,0 +1,16 @@
+export default {
+  deadlineLabel: "Deadline",
+  milestonesTitle: "Key milestones",
+  reminderTitle: "Reminders",
+  reminderEnable: "Enable reminders for this scholarship",
+  reminderChannel: "Reminder channel",
+  upcomingDeadlines: "Upcoming deadlines",
+  eligibleCount: "Eligible scholarships",
+  studentLabel: "Student",
+  courseLabel: "Course",
+  categoryLabel: "Category",
+  domicileLabel: "Domicile",
+  incomeLabel: "Annual family income",
+  educationLabel: "Education level",
+  viewDetails: "View details",
+};

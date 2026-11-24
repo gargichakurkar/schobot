@@ -1,0 +1,105 @@
+# Local environment and secret files
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!*.env.example
+
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# Python test and coverage artifacts
+.pytest_cache/
+.pytest-run/
+.pytest-tmp/
+.pytest_tmp/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Node dependencies, Vite caches, and generated frontend builds
+node_modules/
+.vite/
+dist/
+dist-ssr/
+build/
+
+# Local SQLite databases and database backups
+*.db
+*.sqlite
+*.sqlite3
+*.db-*
+*.sqlite-*
+*.sqlite3-*
+*.backup
+*.dump
+*.bak
+
+# Logs, editor swap files, and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Backend-local test reports and generated test snapshots
+Backend/reports/test-copies/
+Backend/reports/*test*.json
+
+# Local-only cleanup utility contains environment-specific test identifiers
+Backend/app/seed/cleanup_test_artifacts.py
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node and Vite
+node_modules/
+dist/
+build/
+.vite/
+
+# Local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Local test artifacts
+Backend/.pytest-run/
+Backend/reports/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
