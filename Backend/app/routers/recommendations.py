@@ -10,12 +10,14 @@ from app.models.scholarship_match import ScholarshipMatch
 from app.models.student_scholarship_document import StudentScholarshipDocument
 from app.models.student_profile import StudentProfile
 from app.models.student_scholarship_progress import StudentScholarshipProgress
+from app.schemas.document import DynamicScholarshipDocumentsResponse
 from app.schemas.recommendation import RecommendationMatch, RecommendationResponse
 from app.schemas.scholarship_document import (
     ScholarshipDocumentResponse,
     ScholarshipDocumentUpdate,
     ScholarshipDocumentsResponse,
 )
+from app.services.document_vault_service import DocumentVaultService
 from app.schemas.scholarship_progress import ScholarshipProgressResponse, ScholarshipProgressUpdate
 from app.schemas.student_profile import StudentProfileCreate, StudentProfileResponse
 from app.services.matching_service import MatchingService
@@ -179,47 +181,37 @@ def _get_student_scholarship(
     if student is None:
         raise HTTPException(status_code=404, detail="Student profile not found")
 
-    match = db.query(ScholarshipMatch).filter(
-        ScholarshipMatch.student_id == student_id,
-        ScholarshipMatch.scholarship_id == scholarship_id,
-    ).first()
-    if match is None:
-        raise HTTPException(status_code=404, detail="Scholarship recommendation not found for this student")
+    scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
+    if scholarship is None:
+        raise HTTPException(status_code=404, detail="Scholarship not found")
 
 
 @router.get(
     "/recommendations/{student_id}/scholarship/{scholarship_id}/documents",
-    response_model=ScholarshipDocumentsResponse,
+    response_model=DynamicScholarshipDocumentsResponse,
 )
 def get_scholarship_documents(
     student_id: str,
     scholarship_id: str,
     db: Session = Depends(get_db),
-) -> ScholarshipDocumentsResponse:
+) -> DynamicScholarshipDocumentsResponse:
     _get_student_scholarship(student_id, scholarship_id, db)
-    saved_documents = {
-        document.document_name: document
-        for document in db.query(StudentScholarshipDocument)
-        .filter(
-            StudentScholarshipDocument.student_id == student_id,
-            StudentScholarshipDocument.scholarship_id == scholarship_id,
-        )
-        .all()
-    }
-    documents = [
-        ScholarshipDocumentResponse(
-            document_name=name,
-            status=saved_documents[name].status if name in saved_documents else "not_uploaded",
-            notes=saved_documents[name].notes if name in saved_documents else None,
-            updated_at=saved_documents[name].updated_at if name in saved_documents else None,
-        )
-        for name in REQUIRED_DOCUMENTS
-    ]
-    return ScholarshipDocumentsResponse(
-        student_id=student_id,
-        scholarship_id=scholarship_id,
-        documents=documents,
-    )
+    vault_service = DocumentVaultService(db)
+    return vault_service.match_documents_for_scholarship(student_id, scholarship_id)
+
+
+@router.post(
+    "/recommendations/{student_id}/scholarship/{scholarship_id}/documents/match",
+    response_model=DynamicScholarshipDocumentsResponse,
+)
+def match_scholarship_documents(
+    student_id: str,
+    scholarship_id: str,
+    db: Session = Depends(get_db),
+) -> DynamicScholarshipDocumentsResponse:
+    _get_student_scholarship(student_id, scholarship_id, db)
+    vault_service = DocumentVaultService(db)
+    return vault_service.match_documents_for_scholarship(student_id, scholarship_id)
 
 
 @router.patch(
@@ -234,8 +226,8 @@ def update_scholarship_document(
     db: Session = Depends(get_db),
 ) -> ScholarshipDocumentResponse:
     _get_student_scholarship(student_id, scholarship_id, db)
-    if document_name not in REQUIRED_DOCUMENTS:
-        raise HTTPException(status_code=404, detail="Required document not found")
+    if not document_name.strip():
+        raise HTTPException(status_code=422, detail="Document name cannot be empty")
 
     document = db.query(StudentScholarshipDocument).filter(
         StudentScholarshipDocument.student_id == student_id,

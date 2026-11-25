@@ -31,7 +31,7 @@ class ReminderPreferenceRequest(BaseModel):
 
 
 class CounselorLinkRequest(BaseModel):
-    student_id: str = Field(min_length=1, max_length=36)
+    student_id: str | None = Field(default=None, min_length=1, max_length=36)
     counselor_email: str = Field(min_length=3, max_length=255)
     language: Literal["en", "mr"] = "en"
 

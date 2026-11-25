@@ -57,3 +57,46 @@ def migrate_scholarship_columns(engine: Engine) -> None:
                 "ALTER TABLE scholarships "
                 "ALTER COLUMN category TYPE TEXT USING category::text"
             )
+
+
+def migrate_document_columns(engine: Engine) -> None:
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+
+    # Migrate documents table if it exists
+    if "documents" in tables:
+        columns = inspector.get_columns("documents")
+        existing_columns = {column["name"] for column in columns}
+        ts_type = "TIMESTAMP WITH TIME ZONE" if engine.dialect.name == "postgresql" else "DATETIME"
+        doc_columns = {
+            "original_filename": "VARCHAR(255)",
+            "file_name": "VARCHAR(255)",
+            "storage_path": "VARCHAR(500)",
+            "mime_type": "VARCHAR(100)",
+            "file_size": "INTEGER",
+            "ocr_status": "VARCHAR(50)",
+            "extracted_fields": "JSON",
+            "verification_status": "VARCHAR(50)",
+            "expiry_date": ts_type,
+            "rejection_reason": "TEXT",
+            "verified_by": "VARCHAR(100)",
+            "verified_at": ts_type,
+            "created_at": ts_type,
+            "updated_at": ts_type,
+        }
+        missing_doc = {name: ctype for name, ctype in doc_columns.items() if name not in existing_columns}
+        if missing_doc:
+            with engine.begin() as connection:
+                for name, ctype in missing_doc.items():
+                    connection.exec_driver_sql(f"ALTER TABLE documents ADD COLUMN {name} {ctype}")
+
+    # Migrate student_scholarship_documents if it exists
+    if "student_scholarship_documents" in tables:
+        columns = inspector.get_columns("student_scholarship_documents")
+        existing_columns = {column["name"] for column in columns}
+        if "matched_document_id" not in existing_columns:
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE student_scholarship_documents ADD COLUMN matched_document_id VARCHAR(36)"
+                )
+

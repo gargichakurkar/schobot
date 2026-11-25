@@ -4,15 +4,10 @@ import {
   getScholarshipDocuments,
   getScholarshipEligibility,
   updateScholarshipDocument,
+  uploadStudentDocument,
 } from "../apiClient";
 import ReminderPreferences from "./ReminderPreferences";
 import { translate } from "../i18n";
-
-const documentStatuses = [
-  { value: "not_uploaded", label: "Not uploaded" },
-  { value: "uploaded", label: "Uploaded" },
-  { value: "verified", label: "Verified" },
-];
 
 function formatDeadline(value) {
   if (!value) return "TBD";
@@ -51,9 +46,27 @@ function formatUpdatedAt(value) {
   return Number.isNaN(date.getTime()) ? "Recently" : date.toLocaleString();
 }
 
+function renderStatusBadge(status) {
+  switch (status) {
+    case "verified":
+      return <span className="doc-badge badge-verified">Verified ✓</span>;
+    case "pending_review":
+      return <span className="doc-badge badge-pending">Pending Review ⏳</span>;
+    case "uploaded":
+      return <span className="doc-badge badge-uploaded">Available in Vault 📁</span>;
+    case "rejected":
+      return <span className="doc-badge badge-rejected">Rejected ✕</span>;
+    case "expired":
+      return <span className="doc-badge badge-expired">Expired ⚠</span>;
+    case "missing":
+    default:
+      return <span className="doc-badge badge-missing">Missing ✕</span>;
+  }
+}
+
 export default function ScholarshipDetailModal({ recommendation, studentId, onClose }) {
   const [scholarship, setScholarship] = useState(null);
-  const [documents, setDocuments] = useState([]);
+  const [checklistData, setChecklistData] = useState(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(true);
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(true);
   const [detailsError, setDetailsError] = useState("");
@@ -61,6 +74,8 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
   const [savingDocuments, setSavingDocuments] = useState({});
   const [documentErrors, setDocumentErrors] = useState({});
   const [savedDocuments, setSavedDocuments] = useState({});
+  const [uploadingDoc, setUploadingDoc] = useState({});
+  const [uploadErrors, setUploadErrors] = useState({});
 
   const [eligibility, setEligibility] = useState(() => {
     if (
@@ -81,6 +96,21 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
   });
   const [isLoadingEligibility, setIsLoadingEligibility] = useState(false);
   const [eligibilityError, setEligibilityError] = useState("");
+
+  const loadDocuments = () => {
+    setIsLoadingDocuments(true);
+    setDocumentsError("");
+    return getScholarshipDocuments(studentId, recommendation.scholarship_id)
+      .then((data) => {
+        setChecklistData(data);
+      })
+      .catch((error) => {
+        setDocumentsError(error.message || "Could not load the document checklist.");
+      })
+      .finally(() => {
+        setIsLoadingDocuments(false);
+      });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -118,21 +148,7 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
         });
     }
 
-    getScholarshipDocuments(studentId, recommendation.scholarship_id)
-      .then((data) => {
-        if (!cancelled) {
-          if (!Array.isArray(data.documents)) {
-            throw new Error("The server returned an invalid document checklist.");
-          }
-          setDocuments(data.documents);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) setDocumentsError(error.message || "Could not load the document checklist.");
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingDocuments(false);
-      });
+    loadDocuments();
 
     return () => {
       cancelled = true;
@@ -147,39 +163,62 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const saveDocument = async (document, changes) => {
-    const updatedDocument = { ...document, ...changes };
-    setDocuments((current) => current.map((item) => (
-      item.document_name === document.document_name ? updatedDocument : item
-    )));
+  const saveDocumentNote = async (document, notes) => {
     setSavingDocuments((current) => ({ ...current, [document.document_name]: true }));
     setDocumentErrors((current) => ({ ...current, [document.document_name]: "" }));
     setSavedDocuments((current) => ({ ...current, [document.document_name]: false }));
 
     try {
-      const savedDocument = await updateScholarshipDocument(
+      await updateScholarshipDocument(
         studentId,
         recommendation.scholarship_id,
         document.document_name,
         {
-          status: updatedDocument.status,
-          notes: updatedDocument.notes || null,
+          status: document.status === "missing" ? "not_uploaded" : document.status,
+          notes: notes || null,
         },
       );
-      setDocuments((current) => current.map((item) => (
-        item.document_name === document.document_name ? savedDocument : item
-      )));
+      setChecklistData((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          documents: current.documents.map((item) =>
+            item.document_name === document.document_name ? { ...item, notes } : item
+          ),
+        };
+      });
       setSavedDocuments((current) => ({ ...current, [document.document_name]: true }));
     } catch (error) {
-      setDocuments((current) => current.map((item) => (
-        item.document_name === document.document_name ? document : item
-      )));
       setDocumentErrors((current) => ({
         ...current,
-        [document.document_name]: error.message || "Failed to save; please try again.",
+        [document.document_name]: error.message || "Failed to save note.",
       }));
     } finally {
       setSavingDocuments((current) => ({ ...current, [document.document_name]: false }));
+    }
+  };
+
+  const handleInlineUpload = async (docReq, file) => {
+    if (!file || !studentId) return;
+    setUploadingDoc((prev) => ({ ...prev, [docReq.document_name]: true }));
+    setUploadErrors((prev) => ({ ...prev, [docReq.document_name]: "" }));
+
+    try {
+      await uploadStudentDocument(
+        studentId,
+        docReq.standard_type || docReq.document_name,
+        file,
+        true,
+      );
+      // Auto-refresh checklist on successful upload
+      await loadDocuments();
+    } catch (err) {
+      setUploadErrors((prev) => ({
+        ...prev,
+        [docReq.document_name]: err.message || "Upload failed. Please try again.",
+      }));
+    } finally {
+      setUploadingDoc((prev) => ({ ...prev, [docReq.document_name]: false }));
     }
   };
 
@@ -189,6 +228,7 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
   const qualification = detail.eligible_level || detail.qualification_text || "Not specified";
   const course = detail.eligible_course || "Not specified";
   const deadline = detail.deadline || recommendation.deadline;
+  const documents = checklistData?.documents || [];
 
   return (
     <div
@@ -248,8 +288,16 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
             )}
             {detail.description && <p className="scholarship-modal-description">{detail.description}</p>}
             {detail.benefits && <p className="scholarship-modal-description"><strong>Benefits:</strong> {detail.benefits}</p>}
-            {detail.required_documents && <p className="scholarship-modal-description"><strong>Required documents:</strong> {detail.required_documents}</p>}
-            {detail.eligibility_details && <p className="scholarship-modal-description"><strong>Additional eligibility details:</strong> {detail.eligibility_details}</p>}
+            {detail.required_documents && (
+              <p className="scholarship-modal-description">
+                <strong>Official requirement text:</strong> {detail.required_documents}
+              </p>
+            )}
+            {detail.eligibility_details && (
+              <p className="scholarship-modal-description">
+                <strong>Additional eligibility details:</strong> {detail.eligibility_details}
+              </p>
+            )}
             {website ? (
               <a className="primary-button scholarship-modal-website" href={website} rel="noopener noreferrer" target="_blank">
                 Apply now
@@ -363,65 +411,131 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
 
         <ReminderPreferences studentId={studentId} scholarshipId={recommendation.scholarship_id} />
 
+        {/* Dynamic Required Documents & Vault Matching Section */}
         <section className="document-checklist">
-          <h3>Document verification</h3>
+          <div className="document-section-header">
+            <h3>Required Documents Checklist</h3>
+            <span className="vault-reuse-indicator">Cross-Scholarship Vault Active ⚡</span>
+          </div>
+
           <p className="document-help">
-            Mark each document’s status. “Verified” means the documents have been checked by the scholarship authority.
-            This common checklist may not include every scheme-specific requirement; confirm the list on the official website.
+            Requirements are specific to this scholarship scheme. Documents uploaded once into your Document Vault
+            are automatically matched and reused across all scholarships.
           </p>
+
+          {/* Missing Documents Summary Box */}
+          {checklistData && (
+            <div className="document-summary-box">
+              <div className="summary-stat">
+                <span>Total Required</span>
+                <strong>{checklistData.required_count}</strong>
+              </div>
+              <div className="summary-stat stat-available">
+                <span>Available in Vault</span>
+                <strong>{checklistData.available_count}</strong>
+              </div>
+              <div className="summary-stat stat-missing">
+                <span>Missing Documents</span>
+                <strong>{checklistData.missing_count}</strong>
+              </div>
+              <div className="summary-message">
+                {checklistData.missing_count === 0 ? (
+                  <span className="ready-text">✓ All required documents are available in your vault!</span>
+                ) : (
+                  <span>
+                    <strong>{checklistData.missing_count}</strong> document
+                    {checklistData.missing_count > 1 ? "s" : ""} missing from your vault. Upload below to complete your application.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           {documentsError && <p className="modal-error" role="alert">{documentsError}</p>}
+
           {isLoadingDocuments ? (
-            <p role="status">Loading document checklist...</p>
+            <p role="status">Evaluating document requirements against your vault...</p>
           ) : documents.length > 0 ? (
             <div className="document-checklist-items">
               {documents.map((document) => (
                 <article className="document-checklist-item" key={document.document_name}>
-                  <strong>{document.document_name}</strong>
-                  <label>
-                    <span>Status</span>
-                    <select
-                      aria-label={`${document.document_name} status`}
-                      disabled={Boolean(savingDocuments[document.document_name])}
-                      onChange={(event) => saveDocument(document, { status: event.target.value })}
-                      value={document.status}
-                    >
-                      {documentStatuses.map((status) => (
-                        <option key={status.value} value={status.value}>{status.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="document-note-field">
-                    <span>Note (optional)</span>
-                    <textarea
-                      disabled={Boolean(savingDocuments[document.document_name])}
-                      onBlur={(event) => {
-                        if (event.target.value !== (document.notes || "")) {
-                          saveDocument(document, { notes: event.target.value });
-                        }
-                      }}
-                      onChange={(event) => setDocuments((current) => current.map((item) => (
-                        item.document_name === document.document_name
-                          ? { ...item, notes: event.target.value }
-                          : item
-                      )))}
-                      placeholder="Add a note"
-                      rows="2"
-                      value={document.notes || ""}
-                    />
-                  </label>
+                  <div className="document-info-cell">
+                    <strong className="document-name-text">{document.document_name}</strong>
+                    <span className="document-type-tag">{document.standard_type}</span>
+                    {document.matched_document_filename && (
+                      <span className="vault-matched-file">
+                        📁 Reused from vault: <em>{document.matched_document_filename}</em>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="document-status-cell">
+                    {renderStatusBadge(document.status)}
+
+                    {/* Inline Upload Option for Missing Documents */}
+                    {(document.status === "missing" || document.status === "rejected" || document.status === "expired") && (
+                      <div className="document-upload-action">
+                        <label className="vault-upload-btn">
+                          {uploadingDoc[document.document_name] ? "Uploading..." : "Upload to Vault"}
+                          <input
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            disabled={Boolean(uploadingDoc[document.document_name])}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleInlineUpload(document, file);
+                            }}
+                            type="file"
+                          />
+                        </label>
+                      </div>
+                    )}
+                    {uploadErrors[document.document_name] && (
+                      <small className="field-error-text">{uploadErrors[document.document_name]}</small>
+                    )}
+                  </div>
+
+                  <div className="document-note-cell">
+                    <label className="document-note-field">
+                      <span>Note (optional)</span>
+                      <textarea
+                        disabled={Boolean(savingDocuments[document.document_name])}
+                        onBlur={(event) => {
+                          if (event.target.value !== (document.notes || "")) {
+                            saveDocumentNote(document, event.target.value);
+                          }
+                        }}
+                        defaultValue={document.notes || ""}
+                        placeholder="Add a reference note"
+                        rows="2"
+                      />
+                    </label>
+                  </div>
+
                   <small className="document-save-state" role="status">
                     {savingDocuments[document.document_name]
-                      ? "Saving..."
+                      ? "Saving note..."
                       : documentErrors[document.document_name]
                         ? documentErrors[document.document_name]
                         : savedDocuments[document.document_name]
-                          ? `Saved · Last updated: ${formatUpdatedAt(document.updated_at)}`
-                          : `Last updated: ${formatUpdatedAt(document.updated_at)}`}
+                          ? "Saved"
+                          : document.updated_at
+                            ? `Last updated: ${formatUpdatedAt(document.updated_at)}`
+                            : ""}
                   </small>
                 </article>
               ))}
             </div>
-          ) : null}
+          ) : (
+            <p className="modal-muted">No specific documents are required for this scholarship.</p>
+          )}
+
+          <div className="verification-warning-notice">
+            <small>
+              <strong>Verification policy:</strong> Uploaded documents undergo administrative review before being marked
+              as verified. Scanning a certificate or uploading a file confirms availability in your vault, but does not
+              substitute for verification by scholarship authorities.
+            </small>
+          </div>
         </section>
       </section>
     </div>

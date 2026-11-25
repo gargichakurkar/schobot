@@ -6,6 +6,8 @@ async function request(path, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const token = typeof window !== "undefined" ? window.localStorage.getItem("schobot_auth_token") : null;
+  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   let response;
   try {
     response = await fetch(`${apiBaseUrl}${path}`, {
@@ -13,6 +15,7 @@ async function request(path, options = {}, timeoutMs = 30000) {
       signal: controller.signal,
       headers: {
         ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
+        ...authHeaders,
         ...options.headers,
       },
     });
@@ -118,18 +121,53 @@ function profilePayload(profile) {
   };
 }
 
-export function createProfile(profile) {
-  return request("/api/profiles", {
-    method: "POST",
-    body: JSON.stringify(profilePayload(profile)),
-  });
+export function getAuthToken() {
+  return typeof window !== "undefined" ? window.localStorage.getItem("schobot_auth_token") : null;
 }
 
-export function submitProfileAndGetRecommendations(profile) {
-  return request("/api/profile/submit-and-recommend", {
+export function setAuthToken(token) {
+  if (typeof window !== "undefined") {
+    if (token) {
+      window.localStorage.setItem("schobot_auth_token", token);
+    } else {
+      window.localStorage.removeItem("schobot_auth_token");
+    }
+  }
+}
+
+export async function fetchAuthToken(studentId) {
+  if (!studentId) return null;
+  const data = await request("/api/auth/token", {
+    method: "POST",
+    body: JSON.stringify({ student_id: studentId }),
+  });
+  if (data?.access_token) {
+    setAuthToken(data.access_token);
+    return data.access_token;
+  }
+  return null;
+}
+
+export async function createProfile(profile) {
+  const data = await request("/api/profiles", {
     method: "POST",
     body: JSON.stringify(profilePayload(profile)),
   });
+  if (data?.access_token) {
+    setAuthToken(data.access_token);
+  }
+  return data;
+}
+
+export async function submitProfileAndGetRecommendations(profile) {
+  const data = await request("/api/profile/submit-and-recommend", {
+    method: "POST",
+    body: JSON.stringify(profilePayload(profile)),
+  });
+  if (data?.access_token) {
+    setAuthToken(data.access_token);
+  }
+  return data;
 }
 
 export function getProfile(studentId) {
@@ -140,10 +178,16 @@ export function getHealth() {
   return request("/api/health");
 }
 
-export function scanCertificateDocument(certificateType, file) {
+export function scanCertificateDocument(certificateType, file, studentId = null, saveToVault = false) {
   const formData = new FormData();
   formData.append("certificate_type", certificateType);
   formData.append("file", file);
+  if (studentId) {
+    formData.append("student_id", studentId);
+  }
+  if (saveToVault) {
+    formData.append("save_to_vault", "true");
+  }
   return request(
     "/api/documents/scan",
     {
@@ -151,6 +195,44 @@ export function scanCertificateDocument(certificateType, file) {
       body: formData,
     },
     120000,
+  );
+}
+
+export function getStudentDocuments(studentId) {
+  return request(`/api/student/documents?student_id=${encodeURIComponent(studentId)}`);
+}
+
+export function uploadStudentDocument(studentId, documentType, file, runOcr = true) {
+  const formData = new FormData();
+  formData.append("student_id", studentId);
+  formData.append("document_type", documentType);
+  formData.append("file", file);
+  formData.append("run_ocr", runOcr ? "true" : "false");
+  return request(
+    "/api/student/documents/upload",
+    {
+      method: "POST",
+      body: formData,
+    },
+    120000,
+  );
+}
+
+export function deleteStudentDocument(documentId, studentId) {
+  return request(
+    `/api/student/documents/${encodeURIComponent(documentId)}?student_id=${encodeURIComponent(studentId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export function matchScholarshipDocuments(studentId, scholarshipId) {
+  return request(
+    `/api/recommendations/${encodeURIComponent(studentId)}/scholarship/${encodeURIComponent(scholarshipId)}/documents/match`,
+    {
+      method: "POST",
+    },
   );
 }
 

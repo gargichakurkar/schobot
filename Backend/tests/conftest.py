@@ -6,9 +6,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 from app.core.database import Base, get_db
 from app.main import app
 from app import models  # noqa: F401 - register all model tables on Base
+
+if len(settings.secret_key) < 32:
+    settings.secret_key = "test-only-signing-key-with-adequate-length-32-chars"
 
 
 @pytest.fixture

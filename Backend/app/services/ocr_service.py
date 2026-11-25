@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from io import BytesIO
 from math import sqrt
@@ -11,6 +12,32 @@ try:
     import pytesseract
 except ImportError:  # pragma: no cover
     pytesseract = None
+
+
+def resolve_tesseract_binary() -> str | None:
+    """Resolve the Tesseract binary path from TESSERACT_CMD or system PATH.
+
+    Validates that the target path exists and has executable permissions.
+    """
+    custom_cmd = os.environ.get("TESSERACT_CMD")
+    if custom_cmd:
+        if os.path.isfile(custom_cmd) and os.access(custom_cmd, os.X_OK):
+            return custom_cmd
+        resolved = shutil.which(custom_cmd)
+        if resolved and (os.name == "nt" or os.access(resolved, os.X_OK)):
+            return resolved
+
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    return None
+
+
+# Initialize pytesseract command at module load if binary is available
+if pytesseract is not None:
+    _initial_bin = resolve_tesseract_binary()
+    if _initial_bin and hasattr(pytesseract, "pytesseract") and hasattr(pytesseract.pytesseract, "tesseract_cmd"):
+        pytesseract.pytesseract.tesseract_cmd = _initial_bin
 
 
 MAX_PDF_PAGES = 15
@@ -66,6 +93,10 @@ class OCRService:
             raise OCRUnavailableError(
                 "Tesseract OCR library is not installed on the server."
             )
+        binary = resolve_tesseract_binary()
+        if binary and hasattr(pytesseract, "pytesseract") and hasattr(pytesseract.pytesseract, "tesseract_cmd"):
+            pytesseract.pytesseract.tesseract_cmd = binary
+
         try:
             return pytesseract.image_to_string(
                 image,
@@ -178,6 +209,11 @@ class OCRService:
                             bitmap.close()
                     finally:
                         rendered_page.close()
+
+                    if ocr_deadline - monotonic() <= 0:
+                        raise OCRUnavailableError(
+                            "PDF OCR exceeded the 90-second processing limit."
+                        )
                     methods.add("ocr")
                 else:
                     methods.add("pdf_text")

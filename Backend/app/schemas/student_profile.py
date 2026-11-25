@@ -76,4 +76,5 @@ class StudentProfileUpdate(BaseModel):
 
 class StudentProfileResponse(StudentProfileBase):
     id: str
+    access_token: str | None = None
     model_config = ConfigDict(from_attributes=True)

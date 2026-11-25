@@ -34,6 +34,11 @@ class StudentScholarshipDocument(Base):
         index=True,
     )
     document_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    matched_document_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="not_uploaded")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

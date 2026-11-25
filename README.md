@@ -284,14 +284,44 @@ The backend is optimized to run reliably within **Render's Free Tier (512 MiB RA
 
 ### Deploying to Render via Blueprint (`render.yaml`)
 A single `render.yaml` configuration defines both services:
-1. **Web Service (`schobot-backend`)**:
-   - Build: `pip install -r requirements.txt`
+1. **Web Service (`schobot-backend`) — Docker Runtime**:
+   - Runtime: `docker`
+   - Build Context: `Backend`
+   - Dockerfile: `Backend/Dockerfile` (Installs Debian 12 Bookworm + Tesseract OCR + `eng` & `mar` language data)
+   - Verified during build: `tesseract --version` and `tesseract --list-langs` (must contain `eng` and `mar`)
    - Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1`
-   - Health check: `/api/health`
-2. **24-Hour Cron Ingestion Job (`schobot-scholarship-sync`)**:
+   - Health check: `/api/health` (reports `{"status":"ok", "db":"connected", "ocr":"available"}`)
+2. **24-Hour Cron Ingestion Job (`schobot-scholarship-sync`) — Python Runtime**:
+   - Runtime: `python`
    - Schedule: `0 3 * * *` (Daily at 3:00 AM UTC)
    - Build: `pip install -r requirements-worker.txt`
    - Start: `python -m app.services.scholarship_fetcher.nsp_fetcher --persist --source nsp`
+
+### How to Run the Backend Locally Using Docker
+
+To build and run the production-grade container locally:
+
+```bash
+# From repository root:
+docker build -t schobot-backend -f Backend/Dockerfile Backend/
+
+# Run container with environment variables:
+docker run -p 8000:8000 \
+  -e DATABASE_URL="sqlite:///./scholarmate.db" \
+  -e SECRET_KEY="your-secret-key" \
+  -e GROQ_API_KEY="your-groq-api-key" \
+  -e CORS_ORIGINS='["http://localhost:5173"]' \
+  schobot-backend
+```
+
+### Verifying OCR in Production
+1. **Health Diagnostic**:
+   Check `GET /api/health` — response will contain `"ocr": "available"`.
+2. **Document Scan Endpoint**:
+   Send a `multipart/form-data` POST request to `/api/documents/scan`:
+   - `certificate_type`: `income_certificate` (or `caste_certificate`, `caste_validity_certificate`, `domicile_certificate`, `nationality_certificate`)
+   - `file`: `<certificate.pdf or certificate.png>`
+   The endpoint returns HTTP 200 with extracted candidate fields (`certificate_number`, `applicant_name`, `issuing_authority`, `date_of_issue`, `annual_income`, etc.) and official gazette guideline sources.
 
 ### Deploying the Frontend to Vercel
 ```bash

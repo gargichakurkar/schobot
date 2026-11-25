@@ -14,20 +14,28 @@ from app.schemas.new_features import CounselorLinkRequest
 from app.services.best_bets_service import compute_best_bets
 from app.services.rule_engine import evaluate_eligibility
 from app.utils.eligibility_helpers import parse_date
+from auth import get_current_student
 
 router = APIRouter(prefix="/api/counselor", tags=["counselor"])
 ELIGIBLE_STATUSES = {"likely_eligible", "needs_verification"}
 
 
 @router.post("/link")
-def create_counselor_link(payload: CounselorLinkRequest, db: Session = Depends(get_db)) -> dict:
-    student = db.query(StudentProfile).filter(StudentProfile.id == payload.student_id).first()
-    if student is None:
-        raise HTTPException(status_code=404, detail="Student profile not found")
-    link = db.query(CounselorLink).filter(CounselorLink.student_id == payload.student_id).first()
+def create_counselor_link(
+    payload: CounselorLinkRequest,
+    current_student: StudentProfile = Depends(get_current_student),
+    db: Session = Depends(get_db),
+) -> dict:
+    if payload.student_id and payload.student_id != current_student.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: You cannot create or replace counselor links for another student.",
+        )
+    student_id = current_student.id
+    link = db.query(CounselorLink).filter(CounselorLink.student_id == student_id).first()
     if link is None:
         link = CounselorLink(
-            student_id=payload.student_id,
+            student_id=student_id,
             counselor_email=str(payload.counselor_email),
             language=payload.language,
             token=secrets.token_urlsafe(32),

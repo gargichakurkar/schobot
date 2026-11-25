@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import Base, engine
-from app.core.migrations import migrate_scholarship_columns
+from app.core.migrations import migrate_document_columns, migrate_scholarship_columns
 from app.models import (
     CounselorLink,
     Document,
@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
     # Controlled startup: ensure tables and missing columns exist without blocking module import
     Base.metadata.create_all(bind=engine)
     migrate_scholarship_columns(engine)
+    migrate_document_columns(engine)
     yield
 
 

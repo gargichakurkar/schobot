@@ -1727,6 +1727,14 @@
   border-top: 1px solid var(--line);
 }
 
+.document-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .document-checklist h3 {
   margin: 0;
   color: #293651;
@@ -1734,8 +1742,68 @@
   font-size: 15px;
 }
 
+.vault-reuse-indicator {
+  padding: 3px 8px;
+  border-radius: 99px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .document-help {
   margin: 6px 0 14px;
+}
+
+.document-summary-box {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.summary-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summary-stat span {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.summary-stat strong {
+  font-size: 18px;
+  color: #1e293b;
+}
+
+.stat-available strong {
+  color: #16a34a;
+}
+
+.stat-missing strong {
+  color: #dc2626;
+}
+
+.summary-message {
+  grid-column: 1 / -1;
+  padding-top: 8px;
+  border-top: 1px dashed #cbd5e1;
+  font-size: 12px;
+  color: #475569;
+}
+
+.ready-text {
+  color: #16a34a;
+  font-weight: 600;
 }
 
 .document-checklist-items {
@@ -1745,12 +1813,114 @@
 
 .document-checklist-item {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(130px, 180px) minmax(180px, 1.5fr);
+  grid-template-columns: minmax(160px, 1.4fr) minmax(130px, 1.2fr) minmax(140px, 1.2fr);
   align-items: center;
-  gap: 10px;
-  padding: 10px;
+  gap: 12px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 7px;
+  background: #ffffff;
+}
+
+.document-info-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.document-name-text {
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.document-type-tag {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.vault-matched-file {
+  font-size: 10px;
+  color: #2563eb;
+}
+
+.document-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doc-badge {
+  display: inline-block;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.badge-verified {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.badge-pending {
+  background: #fef9c3;
+  color: #854d0e;
+  border: 1px solid #fef08a;
+}
+
+.badge-uploaded {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.badge-rejected {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.badge-expired {
+  background: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
+}
+
+.badge-missing {
+  background: #ffe4e6;
+  color: #be123c;
+  border: 1px solid #fecdd3;
+}
+
+.vault-upload-btn {
+  display: inline-block;
+  cursor: pointer;
+  padding: 4px 8px;
+  background: #0284c7;
+  color: white;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.vault-upload-btn input[type="file"] {
+  display: none;
+}
+
+.verification-warning-notice {
+  margin-top: 14px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .document-checklist-item > strong {

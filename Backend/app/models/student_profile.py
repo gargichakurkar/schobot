@@ -54,3 +54,4 @@ class StudentProfile(Base):
     )
 
     scholarship_matches: Mapped[list["ScholarshipMatch"]] = relationship(back_populates="student")
+    documents: Mapped[list["Document"]] = relationship(back_populates="student", cascade="all, delete-orphan")

@@ -14,7 +14,27 @@ router = APIRouter(prefix="/api", tags=["profiles"])
 def create_profile(payload: StudentProfileCreate, db: Session = Depends(get_db)) -> StudentProfileResponse:
     service = ProfileService(db)
     profile = service.create_profile(payload)
-    return profile
+    resp = StudentProfileResponse.model_validate(profile)
+    try:
+        from auth import create_access_token
+        resp.access_token = create_access_token({"sub": profile.id, "role": "student"})
+    except Exception:
+        pass
+    return resp
+
+
+@router.post("/auth/token")
+def issue_student_token(payload: dict, db: Session = Depends(get_db)) -> dict:
+    from app.models.student_profile import StudentProfile
+    student_id = payload.get("student_id")
+    if not student_id:
+        raise HTTPException(status_code=422, detail="student_id is required")
+    student = db.query(StudentProfile).filter(StudentProfile.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    from auth import create_access_token
+    token = create_access_token({"sub": student.id, "role": "student"})
+    return {"access_token": token, "token_type": "bearer", "student_id": student.id}
 
 
 @router.get("/profiles/{student_id}", response_model=StudentProfileResponse)
