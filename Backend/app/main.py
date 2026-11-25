@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -26,7 +27,16 @@ from app.routers.counselor import router as counselor_router
 from app.routers.scholarships import router as scholarships_router
 from app.routers.chat import router as chat_router
 
-app = FastAPI(title=settings.app_name, version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Controlled startup: ensure tables and missing columns exist without blocking module import
+    Base.metadata.create_all(bind=engine)
+    migrate_scholarship_columns(engine)
+    yield
+
+
+app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,9 +55,6 @@ app.include_router(reminders_router)
 app.include_router(counselor_router)
 app.include_router(documents_router)
 app.include_router(chat_router)
-
-Base.metadata.create_all(bind=engine)
-migrate_scholarship_columns(engine)
 
 
 @app.get("/")

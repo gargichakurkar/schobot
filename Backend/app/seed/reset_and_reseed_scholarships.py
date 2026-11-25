@@ -37,7 +37,12 @@ def reset_and_import_in_transaction(db, source: Path) -> dict:
         for _, model in RELATED_MODELS:
             db.query(model).delete(synchronize_session=False)
         report = import_scholarship_datasets(db, source)
-        stats = report[DUAL_FILENAME]
+        stats = (
+            report.get(source.name)
+            or report.get(DUAL_FILENAME)
+            or report.get("scholarships_dataset_dual_links.csv")
+            or next(v for k, v in report.items() if isinstance(v, dict))
+        )
         processed = sum(
             stats[key]
             for key in ("inserted", "updated", "unchanged", "skipped", "invalid")

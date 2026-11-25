@@ -42,6 +42,17 @@ function loadConversation() {
   }
 }
 
+function cleanTextForSpeech(text) {
+  if (!text) return "";
+  return text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/[*_#`~>]/g, "")
+    .replace(/^\s*[-•]\s*/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export default function AIAssistant() {
   const [messages, setMessages] = useState(loadConversation);
   const [prompt, setPrompt] = useState("");
@@ -111,9 +122,15 @@ export default function AIAssistant() {
     setIsLoading(true);
 
     try {
+      const historyPayload = messages
+        .filter((item) => !item.isError && item.text)
+        .slice(-6)
+        .map((item) => ({ role: item.role, content: item.text }));
+
       const result = await sendChatMessage({
         message: `[lang=${requestLanguage}]\n${question}`,
         studentId: getStudentId(),
+        conversationHistory: historyPayload,
       });
       if (typeof result.answer !== "string" || !result.answer.trim()) {
         throw new Error("The assistant returned an empty answer.");
@@ -175,7 +192,7 @@ export default function AIAssistant() {
 
     try {
       const recognition = new SpeechRecognition();
-      recognition.lang = language === "hi" ? "hi-IN" : "en-IN";
+      recognition.lang = language === "mr" ? "mr-IN" : language === "hi" ? "hi-IN" : "en-IN";
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.onresult = (event) => {
@@ -187,7 +204,8 @@ export default function AIAssistant() {
           setInputNotice("No speech was detected. Please try again or type your question.");
           return;
         }
-        void sendMessage(transcript, { requestLanguage: language });
+        setPrompt(transcript);
+        setInputNotice("Speech recognized. You can review or edit your question before sending.");
       };
       recognition.onerror = (event) => {
         const messagesByError = {
@@ -239,23 +257,28 @@ export default function AIAssistant() {
     speech.cancel();
     setInputNotice("");
 
+    const isMarathiResponse =
+      message.language === "mr" || (language === "mr" && /[\u0900-\u097f]/u.test(message.text));
     const isHindiResponse =
-      message.language === "hi" || /[\u0900-\u097f]/u.test(message.text);
-    const locale = isHindiResponse ? "hi-IN" : "en-IN";
-    const languageCode = isHindiResponse ? "hi" : "en";
+      !isMarathiResponse && (message.language === "hi" || /[\u0900-\u097f]/u.test(message.text));
+    const locale = isMarathiResponse ? "mr-IN" : isHindiResponse ? "hi-IN" : "en-IN";
+    const languageCode = isMarathiResponse ? "mr" : isHindiResponse ? "hi" : "en";
     const voices = speech.getVoices();
     const voice =
       voices.find((item) => item.lang.toLowerCase() === locale.toLowerCase())
-      || voices.find((item) => item.lang.toLowerCase().startsWith(`${languageCode}-`));
+      || voices.find((item) => item.lang.toLowerCase().startsWith(`${languageCode}-`))
+      || (isMarathiResponse ? voices.find((item) => item.lang.toLowerCase().startsWith("hi-")) : null)
+      || voices.find((item) => item.lang.toLowerCase().startsWith("en-"));
     if (!voice) {
       setInputNotice(
-        `No ${isHindiResponse ? "Hindi" : "English"} speech voice is available in this browser.`,
+        `No ${isMarathiResponse ? "Marathi" : isHindiResponse ? "Hindi" : "English"} speech voice is available in this browser.`,
       );
       setSpeakingMessageId(null);
       return;
     }
 
-    const utterance = new Utterance(message.text);
+    const cleanedText = cleanTextForSpeech(message.text);
+    const utterance = new Utterance(cleanedText || message.text);
     utterance.lang = voice.lang || locale;
     utterance.voice = voice;
     utterance.rate = 0.96;
@@ -284,7 +307,7 @@ export default function AIAssistant() {
         <p className="eyebrow">HERE TO HELP</p>
         <h1>Schobot AI Assistant</h1>
         <p className="page-subtitle">
-          Ask questions about scholarships in English or Hindi.
+          Ask questions about scholarships in English, Hindi, or Marathi.
         </p>
       </div>
 
@@ -312,7 +335,8 @@ export default function AIAssistant() {
               value={language}
             >
               <option value="en">English</option>
-              <option value="hi">Hindi</option>
+              <option value="hi">Hindi (हिंदी)</option>
+              <option value="mr">Marathi (मराठी)</option>
             </select>
           </label>
         </header>

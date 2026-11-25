@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from io import BytesIO
 from math import sqrt
 from time import monotonic
+from typing import Any
 
-import pytesseract
-from PIL import Image, UnidentifiedImageError
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
+try:
+    import pytesseract
+except ImportError:  # pragma: no cover
+    pytesseract = None
 
 
 MAX_PDF_PAGES = 15
@@ -58,25 +59,35 @@ class OCRService:
 
     def _image_to_text(
         self,
-        image: Image.Image,
+        image: Any,
         timeout_seconds: float = OCR_TIMEOUT_SECONDS,
     ) -> str:
+        if pytesseract is None:
+            raise OCRUnavailableError(
+                "Tesseract OCR library is not installed on the server."
+            )
         try:
             return pytesseract.image_to_string(
                 image,
                 lang=self.languages,
                 timeout=timeout_seconds,
             )
-        except pytesseract.TesseractNotFoundError as error:
+        except getattr(pytesseract, "TesseractNotFoundError", Exception) as error:
             raise OCRUnavailableError(
                 "Tesseract OCR is not installed on the server."
             ) from error
-        except pytesseract.TesseractError as error:
+        except getattr(pytesseract, "TesseractError", Exception) as error:
             raise OCRUnavailableError(
                 "Tesseract OCR or its configured language data is unavailable."
             ) from error
 
     def _extract_image(self, file_bytes: bytes) -> OCRResult:
+        try:
+            from PIL import Image, UnidentifiedImageError
+        except ImportError as error:
+            raise OCRUnavailableError(
+                "Image processing library (Pillow) is not installed on the server."
+            ) from error
         try:
             with Image.open(BytesIO(file_bytes)) as source_image:
                 if source_image.width * source_image.height > MAX_IMAGE_PIXELS:
@@ -86,7 +97,7 @@ class OCRService:
                 image = source_image.convert("RGB")
         except InvalidDocumentError:
             raise
-        except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
+        except (UnidentifiedImageError, OSError, getattr(Image, "DecompressionBombError", Exception)) as error:
             raise InvalidDocumentError("The uploaded image could not be decoded.") from error
 
         try:
@@ -97,6 +108,13 @@ class OCRService:
         return OCRResult(text=text, method="ocr", pages_processed=1, warnings=warning)
 
     def _extract_pdf(self, file_bytes: bytes) -> OCRResult:
+        try:
+            from pypdf import PdfReader
+            from pypdf.errors import PdfReadError
+        except ImportError as error:
+            raise OCRUnavailableError(
+                "PDF processing library (pypdf) is not installed on the server."
+            ) from error
         try:
             reader = PdfReader(BytesIO(file_bytes), strict=False)
         except PdfReadError as error:

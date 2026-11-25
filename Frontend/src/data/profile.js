@@ -13,6 +13,18 @@ export const initialProfile = {
   gender: "",
   academic_score: "",
   score_type: "",
+  disability_percentage: "",
+  has_valid_disability_certificate: null,
+  has_udid: null,
+  has_disability_certificate: null,
+  is_orphan: null,
+  parent_death_due_to_covid: null,
+  parent_martyred_armed_forces: null,
+  is_dependent_of_rpf_rpsf: null,
+  parent_service_category: "",
+  previous_year_passed: null,
+  receives_other_scholarship: null,
+  has_income_certificate: null,
 };
 
 export const educationLevels = [
@@ -184,5 +196,19 @@ export function profileFromBackend(serverProfile, localProfile = initialProfile)
     annual_family_income: serverProfile.annual_family_income == null
       ? localProfile.annual_family_income
       : String(serverProfile.annual_family_income),
+    disability_percentage: serverProfile.disability_percentage == null
+      ? localProfile.disability_percentage
+      : String(serverProfile.disability_percentage),
+    has_valid_disability_certificate: serverProfile.has_valid_disability_certificate ?? localProfile.has_valid_disability_certificate,
+    has_udid: serverProfile.has_udid ?? localProfile.has_udid,
+    has_disability_certificate: serverProfile.has_disability_certificate ?? localProfile.has_disability_certificate,
+    is_orphan: serverProfile.is_orphan ?? localProfile.is_orphan,
+    parent_death_due_to_covid: serverProfile.parent_death_due_to_covid ?? localProfile.parent_death_due_to_covid,
+    parent_martyred_armed_forces: serverProfile.parent_martyred_armed_forces ?? localProfile.parent_martyred_armed_forces,
+    is_dependent_of_rpf_rpsf: serverProfile.is_dependent_of_rpf_rpsf ?? localProfile.is_dependent_of_rpf_rpsf,
+    parent_service_category: serverProfile.parent_service_category || localProfile.parent_service_category,
+    previous_year_passed: serverProfile.previous_year_passed ?? localProfile.previous_year_passed,
+    receives_other_scholarship: serverProfile.receives_other_scholarship ?? localProfile.receives_other_scholarship,
+    has_income_certificate: serverProfile.has_income_certificate ?? localProfile.has_income_certificate,
   };
 }

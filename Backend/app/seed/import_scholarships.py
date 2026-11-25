@@ -497,6 +497,8 @@ def _import_source(
                     )
                 continue
 
+            record["source_filename"] = source_filename
+
             row_key = _source_key(source_filename, record["source_identifier"])
             if row_key in seen_keys:
                 stats["skipped"] += 1
@@ -544,10 +546,15 @@ def import_scholarship_datasets(
     preview: list[dict[str, Any]] | None = [] if dry_run else None
     try:
         initial_record_count = db.query(Scholarship).count() if dry_run else None
+        source_key = (
+            "scholarships_dataset_dual_links.csv"
+            if dual_path.name == "scholarships_dataset_dual_links.csv"
+            else DUAL_FILENAME
+        )
         dual_stats = _import_source(
             db,
             dual_path,
-            DUAL_FILENAME,
+            source_key,
             {"scholarship_name", "offered_by"},
             map_dual_row,
             dry_run=dry_run,
@@ -561,7 +568,10 @@ def import_scholarship_datasets(
         if dry_run:
             db.rollback()
         report = {
+            source_key: dual_stats,
             DUAL_FILENAME: dual_stats,
+            "scholarships_dataset_dual_links.csv": dual_stats,
+            dual_path.name: dual_stats,
             "unique_records": final_record_count,
             "final_record_count": final_record_count,
         }

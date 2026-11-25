@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: schobot-backend
+    runtime: python
+    rootDir: Backend
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama3-8b-8192
+      - key: CORS_ORIGINS
+        value: '["https://schobot.vercel.app","http://localhost:5173","http://127.0.0.1:5173"]'
+
+  - type: cron
+    name: schobot-scholarship-sync
+    runtime: python
+    rootDir: Backend
+    plan: free
+    region: oregon
+    schedule: "0 3 * * *"
+    buildCommand: pip install -r requirements-worker.txt
+    startCommand: python -m app.services.scholarship_fetcher.nsp_fetcher --persist --source nsp
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

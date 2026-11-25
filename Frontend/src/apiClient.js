@@ -81,6 +81,12 @@ function numericValue(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function booleanValue(val) {
+  if (val === true || val === "true") return true;
+  if (val === false || val === "false") return false;
+  return null;
+}
+
 function profilePayload(profile) {
   return {
     full_name: profile.full_name,
@@ -95,9 +101,19 @@ function profilePayload(profile) {
     study_state: profile.state || null,
     category: normalizeCategory(profile.category) || null,
     gender: profile.gender || null,
-    has_disability_certificate: profile.has_disability_certificate ?? null,
+    disability_percentage: numericValue(profile.disability_percentage),
+    has_valid_disability_certificate: booleanValue(profile.has_valid_disability_certificate),
+    has_udid: booleanValue(profile.has_udid),
+    has_disability_certificate: booleanValue(profile.has_disability_certificate),
+    is_orphan: booleanValue(profile.is_orphan),
+    parent_death_due_to_covid: booleanValue(profile.parent_death_due_to_covid),
+    parent_martyred_armed_forces: booleanValue(profile.parent_martyred_armed_forces),
+    is_dependent_of_rpf_rpsf: booleanValue(profile.is_dependent_of_rpf_rpsf),
+    parent_service_category: profile.parent_service_category || null,
+    previous_year_passed: booleanValue(profile.previous_year_passed),
+    receives_other_scholarship: booleanValue(profile.receives_other_scholarship),
     annual_family_income: numericValue(profile.annual_family_income),
-    has_income_certificate: profile.has_income_certificate ?? null,
+    has_income_certificate: booleanValue(profile.has_income_certificate),
     profile_completed: true,
   };
 }
@@ -212,12 +228,13 @@ export function updateReminderPreferences({ studentId, scholarshipId, channel, e
   });
 }
 
-export function sendChatMessage({ message, studentId }) {
+export function sendChatMessage({ message, studentId, conversationHistory = [] }) {
   return request("/api/chat", {
     method: "POST",
     body: JSON.stringify({
       message,
       student_id: studentId || null,
+      conversation_history: conversationHistory,
     }),
   });
 }

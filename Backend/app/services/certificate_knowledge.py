@@ -10,13 +10,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from bs4 import BeautifulSoup
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
-from sentence_transformers import SentenceTransformer
-
-
 class CertificateType(str, Enum):
     INCOME = "income_certificate"
     CASTE = "caste_certificate"
@@ -217,6 +210,12 @@ def _chunks(text: str, source: OfficialSource, page: int | None) -> list[Passage
 
 
 def _extract_html(source: OfficialSource, raw: bytes) -> str:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError as error:
+        raise KnowledgeBaseUnavailableError(
+            "HTML parser library (beautifulsoup4) is unavailable on the server."
+        ) from error
     soup = BeautifulSoup(raw, "html.parser")
     if source.extraction_kind == "directory_row":
         matching_rows = [
@@ -255,6 +254,13 @@ def _extract_source(source: OfficialSource, raw: bytes) -> list[Passage]:
             raise KnowledgeBaseUnavailableError(
                 f"The approved PDF signature is missing from {source.filename}."
             )
+        try:
+            from pypdf import PdfReader
+            from pypdf.errors import PdfReadError
+        except ImportError as error:
+            raise KnowledgeBaseUnavailableError(
+                "PDF parsing library (pypdf) is unavailable on the server."
+            ) from error
         try:
             reader = PdfReader(BytesIO(raw), strict=False)
             passages = []
@@ -315,8 +321,9 @@ def _load_corpus() -> tuple[tuple[Passage, ...], tuple[dict[str, Any], ...]]:
 
 
 @lru_cache(maxsize=1)
-def _load_embedding_model() -> SentenceTransformer:
+def _load_embedding_model() -> Any:
     try:
+        from sentence_transformers import SentenceTransformer
         return SentenceTransformer(
             _MODEL_NAME,
             local_files_only=True,
@@ -329,9 +336,10 @@ def _load_embedding_model() -> SentenceTransformer:
 
 
 @lru_cache(maxsize=1)
-def _load_embeddings() -> tuple[tuple[Passage, ...], tuple[dict[str, Any], ...], np.ndarray]:
+def _load_embeddings() -> tuple[tuple[Passage, ...], tuple[dict[str, Any], ...], Any]:
     passages, manifest = _load_corpus()
     try:
+        import numpy as np
         model = _load_embedding_model()
         vectors = model.encode(
             [passage.text for passage in passages],

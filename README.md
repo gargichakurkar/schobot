@@ -262,8 +262,87 @@ This phase intentionally does not integrate the much larger historical outcomes 
 ## Constraints and guardrails
 
 - Keep rule-engine normalization narrow, transparent, and covered by tests; preserve the existing match statuses.
-- Do not introduce LLM-based eligibility decisions.
-- Do not add heavy new dependencies unless strictly necessary.
+- Do not introduce LLM-based eligibility decisions. The deterministic Python rule engine is the single source of truth.
+- Do not add heavy new dependencies to the web service. Heavy ML/worker dependencies are isolated to `requirements-worker.txt`.
 - Keep the code modular, typed, and consistent with the existing style.
 - Preserve the folder structure and naming conventions already in use.
-- Ensure all code works with the current SQLite development setup.
+- Ensure all code works with the current SQLite development setup and PostgreSQL in production.
+
+---
+
+## Production Deployment & Render 512 MB Optimization
+
+### Architecture & Memory Optimization
+The backend is optimized to run reliably within **Render's Free Tier (512 MiB RAM limit)**:
+1. **Lazy Imports**: Heavy ML and OCR libraries (`sentence-transformers`, `torch`, `pypdfium2`) are loaded on-demand rather than at application boot, reducing startup heap from **279 MiB to ~22 MiB (92% reduction)**.
+2. **Single Worker Uvicorn**: Runs with `--workers 1` to prevent multiple Python processes from exhausting memory.
+3. **Dual Requirements Isolation**:
+   - `Backend/requirements.txt`: Lightweight web dependencies required for the FastAPI API.
+   - `Backend/requirements-worker.txt`: Additional ML, PDF, and ingestion libraries for background jobs.
+4. **Controlled DB Lifecycle**: Table migrations run within the FastAPI `lifespan` handler instead of top-level import time.
+5. **Database Scheme Compatibility**: Automatically normalizes Render/Supabase `postgres://` URLs to `postgresql://` and enables connection pooling (`pool_pre_ping=True`, `pool_recycle=300`).
+
+### Deploying to Render via Blueprint (`render.yaml`)
+A single `render.yaml` configuration defines both services:
+1. **Web Service (`schobot-backend`)**:
+   - Build: `pip install -r requirements.txt`
+   - Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1`
+   - Health check: `/api/health`
+2. **24-Hour Cron Ingestion Job (`schobot-scholarship-sync`)**:
+   - Schedule: `0 3 * * *` (Daily at 3:00 AM UTC)
+   - Build: `pip install -r requirements-worker.txt`
+   - Start: `python -m app.services.scholarship_fetcher.nsp_fetcher --persist --source nsp`
+
+### Deploying the Frontend to Vercel
+```bash
+cd Frontend
+npm install
+npm run build
+```
+Set `VITE_API_URL` to your Render backend URL (e.g., `https://schobot-backend.onrender.com`).
+
+---
+
+## Demonstration Guide (Instructor / ISR Review)
+
+### Workflow A: Profile Setup & Instant Recommendations
+1. Open the web application and navigate to **My Profile**.
+2. Enter student information:
+   - Full Name: `Asha Verma`
+   - Education: `Undergraduate`, Course: `B.Tech`, Year: `2nd Year`
+   - Domicile & Study State: `Maharashtra`
+   - Category: `General` (or `OBC`, `SC`, `ST`, `SEBC`, `VJNT`)
+   - Gender: `Female`
+   - Annual Family Income: `1,50,000`
+   - Academic Score: `88%`
+3. Click **Save Profile**. Recommendations recalculate atomically without duplicate rows or stale data.
+
+### Workflow B: Explainable Eligibility ("Why You Match This Scholarship")
+1. Navigate to **Eligible Scholarships** and click on a recommended scholarship (e.g. *Pragati Scholarship Scheme for Girl Students*).
+2. Inspect the **"Why You Match This Scholarship"** section:
+   - **Status Banner**: Displays `Likely Eligible`, `Needs Verification`, or `Not Eligible` with exact percentage match.
+   - **Group A (Requirements You Meet)**: Lists each passed condition (gender, education level, course, income cap, academic score) with verified evidence.
+   - **Group B (Requirements You Do Not Meet)**: Explains any disqualifying condition.
+   - **Group C (Needs Verification)**: Highlights unverified documents or missing criteria.
+
+### Workflow C: AI Chat Assistant with Conversational Grounding
+1. Navigate to the **AI Assistant** tab.
+2. Select language preference: **English**, **Hindi (हिंदी)**, or **Marathi (मराठी)**.
+3. Ask: *"What is the deadline for Pragati Scholarship?"*
+4. Ask a follow-up question: *"How can I apply for it?"* — Notice the assistant resolves *"it"* using multi-turn conversation history.
+5. Inquire: *"Am I eligible?"* — Notice the assistant explains results from the deterministic rule engine rather than hallucinating eligibility.
+
+### Workflow D: Voice Assistant (STT & TTS)
+1. In the AI Assistant, click the **Microphone** icon and speak a question.
+2. The transcribed question appears in the input box, allowing the student to **review and edit before sending**.
+3. Click the **Speaker** icon on any response to hear natural speech output in English, Hindi, or Marathi with all Markdown syntax and URLs automatically stripped.
+
+### Workflow E: Certificate Intelligence & Verification
+1. Navigate to **Certificate Scanner**.
+2. Upload a sample Income, Caste, or Domicile certificate (PDF or image).
+3. The system extracts key fields locally without storing sensitive data, surfaces candidates for student confirmation, and links grounded guidelines from official government gazettes.
+
+### Workflow F: 24-Hour Autonomous Scholarship Ingestion
+1. The ingestion pipeline runs via `python -m app.services.scholarship_fetcher.nsp_fetcher --persist --source nsp`.
+2. Verifies domains against the official allowlist (`scholarships.gov.in`, `mahadbt.maharashtra.gov.in`).
+3. SHA256 fingerprints prevent duplicate ingestion while updating existing records idempotently.

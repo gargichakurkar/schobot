@@ -21,9 +21,14 @@ def chat_with_assistant(
 ) -> ChatResponse:
     try:
         service = AIChatService(db)
+        history_dicts = [
+            {"role": msg.role, "content": msg.content}
+            for msg in payload.conversation_history[-6:]
+        ]
         result = service.answer(
             question=payload.message,
             student_id=payload.student_id,
+            conversation_history=history_dicts,
         )
         return ChatResponse(**result)
 

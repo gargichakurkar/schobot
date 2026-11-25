@@ -17,7 +17,7 @@ from app.services.rule_engine import evaluate_eligibility
 
 MIN_RELEVANCE_SCORE = 0.38
 MAX_RETRIEVAL_RESULTS = 6
-RESPONSE_LANGUAGE_DIRECTIVE = re.compile(r"^\[lang=(en|hi)\]\s*", re.IGNORECASE)
+RESPONSE_LANGUAGE_DIRECTIVE = re.compile(r"^\[lang=(en|hi|mr)\]\s*", re.IGNORECASE)
 ELIGIBILITY_QUESTION = re.compile(
     r"\b(?:eligib(?:le|ility)|qualif(?:y|ied|ication)|criteria|requirements?)\b"
     r"|\b(?:can|could|may|do)\s+i\s+(?:apply|qualify|meet|satisfy|get|receive)\b"
@@ -241,7 +241,12 @@ class AIChatService:
             return normalized
         return "unknown"
 
-    def answer(self, question: str, student_id: str | None = None) -> dict:
+    def answer(
+        self,
+        question: str,
+        student_id: str | None = None,
+        conversation_history: list[dict] | None = None,
+    ) -> dict:
         question = question.strip()
         language_match = RESPONSE_LANGUAGE_DIRECTIVE.match(question)
         response_language = (
@@ -291,6 +296,14 @@ class AIChatService:
                 student_id,
                 question,
             )
+
+        if not scholarships and conversation_history:
+            for turn in reversed(conversation_history):
+                prev_text = turn.get("content", "")
+                prev_scholarships = self._retrieve_scholarships(prev_text)
+                if prev_scholarships:
+                    scholarships = prev_scholarships
+                    break
 
         if not scholarships:
             if not self._tokens(question):
@@ -394,31 +407,64 @@ Rules:
     student to complete and save their profile before assessing eligibility.
 """
 
-        language_instruction = (
-            f"Response language preference: "
-            f"{'Hindi' if response_language == 'hi' else 'English'}.\n\n"
-            if response_language
-            else ""
-        )
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        f"{language_instruction}"
-                        f"Student question:\n{question}\n\n"
-                        f"Available database context:\n"
-                        f"{json.dumps(context, ensure_ascii=False, default=str)}"
-                    ),
-                },
-            ],
-            temperature=0.2,
-            max_tokens=800,
+        if response_language == "hi":
+            language_instruction = "Response language preference: Hindi.\n\n"
+        elif response_language == "mr":
+            language_instruction = "Response language preference: Marathi.\n\n"
+        elif response_language == "en":
+            language_instruction = "Response language preference: English.\n\n"
+        else:
+            language_instruction = ""
+
+        messages = [{"role": "system", "content": system_prompt}]
+        if conversation_history:
+            for turn in conversation_history[-6:]:
+                role = turn.get("role")
+                content = turn.get("content")
+                if role in {"user", "assistant"} and content:
+                    messages.append({"role": role, "content": str(content)[:1000]})
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"{language_instruction}"
+                    f"Student question:\n{question}\n\n"
+                    f"Available database context:\n"
+                    f"{json.dumps(context, ensure_ascii=False, default=str)}"
+                ),
+            }
         )
 
-        answer = response.choices[0].message.content or ""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=800,
+            )
+            answer = response.choices[0].message.content or ""
+        except Exception:
+            fallback_lines = [
+                "Here is verified information from our scholarship database:"
+            ]
+            for s in scholarship_context[:3]:
+                fallback_lines.append(f"\n• **{s['name']}**")
+                if s.get("provider"):
+                    fallback_lines.append(f"  - Provider: {s['provider']}")
+                if s.get("deadline"):
+                    fallback_lines.append(f"  - Deadline: {s['deadline']}")
+                if s.get("benefits"):
+                    fallback_lines.append(f"  - Benefits: {s['benefits']}")
+                if s.get("documents"):
+                    fallback_lines.append(f"  - Documents: {s['documents']}")
+                if s.get("official_link"):
+                    fallback_lines.append(f"  - Official Link: {s['official_link']}")
+            if eligibility_results:
+                fallback_lines.append("\n**Calculated Eligibility:**")
+                for er in eligibility_results[:3]:
+                    status_label = er["match_status"].replace("_", " ").title()
+                    fallback_lines.append(f"• {er['scholarship_name']}: {status_label} (Match: {er['match_score']}%)")
+            answer = "\n".join(fallback_lines)
 
         sources = [
             {

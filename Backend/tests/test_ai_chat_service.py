@@ -428,3 +428,88 @@ def test_generic_documents_question_uses_existing_student_recommendations(db_ses
     context = json.loads(user_message.split("Available database context:\n", 1)[1])
     assert context["scholarships"][0]["documents"] == scholarship.required_documents
     assert db_session.query(ScholarshipMatch).count() == 1
+
+
+def test_language_directive_prompts_marathi(db_session):
+    requested = add_scholarship(
+        db_session,
+        "Pragati Scholarship Scheme for Girl Students",
+        official_link="https://scholarships.gov.in/apply",
+    )
+
+    class FakeCompletions:
+        request = None
+
+        def create(self, **kwargs):
+            self.request = kwargs
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="माहिती उपलब्ध आहे.")
+                    )
+                ]
+            )
+
+    completions = FakeCompletions()
+    service = make_service(db_session)
+    service.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    service.model = "test-model"
+
+    response = service.answer(
+        "[lang=mr] Pragati Scholarship Scheme for Girl Students"
+    )
+
+    assert response["sources"][0]["scholarship_id"] == requested.id
+    user_message = completions.request["messages"][1]["content"]
+    assert user_message.startswith("Response language preference: Marathi.")
+
+
+def test_conversation_history_resolves_followup_scholarship_reference(db_session):
+    requested = add_scholarship(
+        db_session,
+        "Pragati Scholarship Scheme for Girl Students",
+        official_link="https://scholarships.gov.in/apply",
+        deadline=datetime(2027, 3, 31, tzinfo=timezone.utc),
+    )
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    history = [
+        {"role": "user", "content": "Tell me about Pragati Scholarship Scheme for Girl Students"},
+        {"role": "assistant", "content": "Pragati scholarship provides assistance for girl students."},
+    ]
+
+    response = service.answer(
+        "What is its deadline?",
+        conversation_history=history,
+    )
+
+    assert len(response["sources"]) >= 1
+    assert response["sources"][0]["scholarship_id"] == requested.id
+    messages = completions.request["messages"]
+    # Check that history was passed to completions
+    assert any(m.get("content") == history[0]["content"] for m in messages)
+
+
+def test_groq_failure_returns_grounded_fallback_from_database(db_session):
+    requested = add_scholarship(
+        db_session,
+        "Pragati Scholarship Scheme for Girl Students",
+        official_link="https://scholarships.gov.in/apply",
+        benefits="Rs. 50,000 per annum",
+    )
+
+    class FailingCompletions:
+        def create(self, **kwargs):
+            raise RuntimeError("Groq API rate limit or network error")
+
+    service = make_service(db_session)
+    service.client = SimpleNamespace(chat=SimpleNamespace(completions=FailingCompletions()))
+    service.model = "test-model"
+
+    response = service.answer("Tell me about Pragati Scholarship Scheme for Girl Students")
+
+    assert response["sources"][0]["scholarship_id"] == requested.id
+    assert "Here is verified information from our scholarship database" in response["answer"]
+    assert requested.scholarship_name in response["answer"]
+    assert requested.official_link in response["answer"]

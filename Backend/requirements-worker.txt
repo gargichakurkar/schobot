@@ -1,0 +1,3 @@
+# Worker / Heavy ML requirements for ingestion and embedding tasks
+-r requirements.txt
+sentence-transformers>=2.2.0
