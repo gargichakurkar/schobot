@@ -8,6 +8,7 @@ const navigation = [
   { label: "My Profile", to: "/profile", icon: "user" },
   { label: "Eligible Scholarships", to: "/eligible", icon: "check" },
   { label: "AI Assistant", to: "/assistant", icon: "assistant" },
+  { label: "Certificate Scanner", to: "/documents", icon: "search" },
 ];
 
 export default function Sidebar({ menuOpen, onNavigate }) {

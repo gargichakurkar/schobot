@@ -2,16 +2,17 @@ import { normalizeCategory, normalizeEducationLevel } from "./data/profile";
 
 export const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
-async function request(path, options = {}) {
+async function request(path, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 30000);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   let response;
   try {
     response = await fetch(`${apiBaseUrl}${path}`, {
       ...options,
       signal: controller.signal,
       headers: {
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
         ...options.headers,
       },
     });
@@ -121,6 +122,20 @@ export function getProfile(studentId) {
 
 export function getHealth() {
   return request("/api/health");
+}
+
+export function scanCertificateDocument(certificateType, file) {
+  const formData = new FormData();
+  formData.append("certificate_type", certificateType);
+  formData.append("file", file);
+  return request(
+    "/api/documents/scan",
+    {
+      method: "POST",
+      body: formData,
+    },
+    120000,
+  );
 }
 
 export function updateProfile(studentId, profile) {

@@ -10,6 +10,7 @@ import EligibleScholarships from "./pages/EligibleScholarships";
 import MyProfile from "./pages/MyProfile";
 import ScholarshipDetails from "./pages/ScholarshipDetails";
 import AIAssistant from "./pages/AIAssistant";
+import CertificateScanner from "./pages/CertificateScanner";
 import "./App.css";
 
 function PlaceholderPage({ title, description }) {
@@ -60,6 +61,7 @@ function AppLayout() {
           <Route path="/eligible" element={<EligibleScholarships />} />
           <Route path="/scholarship/:id" element={<ScholarshipDetails />} />
           <Route path="/assistant" element={<AIAssistant />} />
+          <Route path="/documents" element={<CertificateScanner />} />
           <Route
             path="*"
             element={<PlaceholderPage title="Page not found" description="Choose a section from the navigation." />}

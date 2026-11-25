@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import ProfileForm from "../components/ProfileForm";
-import { getProfile, submitProfileAndGetRecommendations } from "../apiClient";
+import {
+  getProfile,
+  getRecommendations,
+  submitProfileAndGetRecommendations,
+  updateProfile,
+} from "../apiClient";
 import {
   getStudentId,
   clearStudentId,
@@ -66,19 +71,40 @@ export default function MyProfile() {
       return;
     }
 
+    const existingStudentId = getStudentId();
     let student;
+    let recommendationWarning = "";
     try {
-      const response = await submitProfileAndGetRecommendations(profile);
-      student = response?.student;
-      if (!student?.id) {
-        throw new Error("Server response did not include a student ID.");
+      if (existingStudentId) {
+        student = await updateProfile(existingStudentId, profile);
+        if (student?.id !== existingStudentId) {
+          throw new Error("Server response did not confirm the existing student ID.");
+        }
+
+        try {
+          const response = await getRecommendations(existingStudentId);
+          if (!Array.isArray(response?.recommendations)) {
+            throw new Error("The server returned an invalid recommendations response.");
+          }
+        } catch (error) {
+          console.warn("Profile updated, but recommendations could not be loaded.", error);
+          recommendationWarning = "Recommendations could not be loaded. You can retry from Eligible Scholarships.";
+        }
+      } else {
+        const response = await submitProfileAndGetRecommendations(profile);
+        student = response?.student;
+        if (!student?.id) {
+          throw new Error("Server response did not include a student ID.");
+        }
       }
     } catch (error) {
       console.error("Could not save the Schobot profile to the server.", error);
-      try {
-        clearStudentId();
-      } catch (storageError) {
-        console.warn("Could not clear the old Schobot student ID.", storageError);
+      if (!existingStudentId) {
+        try {
+          clearStudentId();
+        } catch (storageError) {
+          console.warn("Could not clear the old Schobot student ID.", storageError);
+        }
       }
       window.dispatchEvent(new Event("schobot-profile-updated"));
       setSaveError("Could not save your profile to the server right now. Your data is saved locally.");
@@ -93,7 +119,12 @@ export default function MyProfile() {
       saveStudentProfile(savedProfile);
       setProfile(savedProfile);
       window.dispatchEvent(new Event("schobot-profile-updated"));
-      setSaveMessage("Your profile has been saved and recommendations are ready.");
+      setSaveMessage(
+        existingStudentId
+          ? "Your profile has been updated."
+          : "Your profile has been saved and recommendations are ready.",
+      );
+      setSaveErrorDetail(recommendationWarning);
     } catch (error) {
       console.error("The server saved the profile, but the browser could not finish local synchronization.", error);
       setSaveError("Your profile was saved to the server, but this browser could not store its student ID.");
