@@ -179,6 +179,12 @@ export function getScholarship(scholarshipId) {
   return request(`/api/scholarships/${encodeURIComponent(scholarshipId)}`);
 }
 
+export function getScholarshipEligibility(scholarshipId, studentId) {
+  return request(
+    `/api/scholarships/${encodeURIComponent(scholarshipId)}/eligibility/${encodeURIComponent(studentId)}`,
+  );
+}
+
 export function getScholarships(filters = {}) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {

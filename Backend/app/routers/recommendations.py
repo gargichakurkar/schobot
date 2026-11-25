@@ -259,3 +259,48 @@ def update_scholarship_document(
     db.commit()
     db.refresh(document)
     return ScholarshipDocumentResponse.model_validate(document)
+
+
+@router.get("/recommendations/{student_id}/scholarship/{scholarship_id}/eligibility")
+def get_recommendation_eligibility(
+    student_id: str,
+    scholarship_id: str,
+    db: Session = Depends(get_db),
+):
+    student = db.query(StudentProfile).filter(StudentProfile.id == student_id).first()
+    if student is None:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
+    if scholarship is None:
+        raise HTTPException(status_code=404, detail="Scholarship not found")
+
+    match = db.query(ScholarshipMatch).filter(
+        ScholarshipMatch.student_id == student_id,
+        ScholarshipMatch.scholarship_id == scholarship_id,
+    ).first()
+
+    if match:
+        return {
+            "student_id": student.id,
+            "scholarship_id": scholarship.id,
+            "scholarship_name": scholarship.scholarship_name,
+            "match_status": match.match_status,
+            "match_score": match.match_score,
+            "passed_rules": match.passed_rules or [],
+            "failed_rules": match.failed_rules or [],
+            "unknown_rules": match.unknown_rules or [],
+            "warnings": match.warnings or [],
+        }
+
+    result = evaluate_eligibility(student, scholarship)
+    return {
+        "student_id": student.id,
+        "scholarship_id": scholarship.id,
+        "scholarship_name": scholarship.scholarship_name,
+        "match_status": result["match_status"],
+        "match_score": result["match_score"],
+        "passed_rules": result["passed_rules"],
+        "failed_rules": result["failed_rules"],
+        "unknown_rules": result["unknown_rules"],
+        "warnings": result["warnings"],
+    }

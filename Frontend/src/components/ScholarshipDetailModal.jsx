@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   getScholarship,
   getScholarshipDocuments,
+  getScholarshipEligibility,
   updateScholarshipDocument,
 } from "../apiClient";
 import ReminderPreferences from "./ReminderPreferences";
@@ -61,6 +62,26 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
   const [documentErrors, setDocumentErrors] = useState({});
   const [savedDocuments, setSavedDocuments] = useState({});
 
+  const [eligibility, setEligibility] = useState(() => {
+    if (
+      Array.isArray(recommendation?.passed_rules)
+      || Array.isArray(recommendation?.failed_rules)
+      || Array.isArray(recommendation?.unknown_rules)
+    ) {
+      return {
+        match_status: recommendation.match_status,
+        match_score: recommendation.match_score,
+        passed_rules: recommendation.passed_rules || [],
+        failed_rules: recommendation.failed_rules || [],
+        unknown_rules: recommendation.unknown_rules || [],
+        warnings: recommendation.warnings || [],
+      };
+    }
+    return null;
+  });
+  const [isLoadingEligibility, setIsLoadingEligibility] = useState(false);
+  const [eligibilityError, setEligibilityError] = useState("");
+
   useEffect(() => {
     let cancelled = false;
     getScholarship(recommendation.scholarship_id)
@@ -73,6 +94,29 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
       .finally(() => {
         if (!cancelled) setIsLoadingDetails(false);
       });
+
+    if (!eligibility && studentId && recommendation?.scholarship_id) {
+      setIsLoadingEligibility(true);
+      getScholarshipEligibility(recommendation.scholarship_id, studentId)
+        .then((data) => {
+          if (!cancelled) {
+            setEligibility({
+              match_status: data.match_status,
+              match_score: data.match_score,
+              passed_rules: data.passed_rules || [],
+              failed_rules: data.failed_rules || [],
+              unknown_rules: data.unknown_rules || [],
+              warnings: data.warnings || [],
+            });
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) setEligibilityError(error.message || "Could not load eligibility evaluation.");
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoadingEligibility(false);
+        });
+    }
 
     getScholarshipDocuments(studentId, recommendation.scholarship_id)
       .then((data) => {
@@ -220,6 +264,102 @@ export default function ScholarshipDetailModal({ recommendation, studentId, onCl
             )}
           </>
         )}
+
+        <section className="eligibility-explanation-section">
+          <h3>Why You Match This Scholarship</h3>
+
+          {isLoadingEligibility ? (
+            <p role="status">Loading eligibility breakdown...</p>
+          ) : eligibilityError ? (
+            <p className="modal-error" role="alert">{eligibilityError}</p>
+          ) : eligibility ? (
+            <>
+              <div className={`eligibility-status-banner status-${eligibility.match_status || "unknown"}`}>
+                <span>
+                  Eligibility Status:{" "}
+                  <strong>
+                    {eligibility.match_status === "likely_eligible"
+                      ? "Likely Eligible"
+                      : eligibility.match_status === "needs_verification"
+                        ? "Needs Verification"
+                        : eligibility.match_status === "not_matched"
+                          ? "Not Eligible"
+                          : eligibility.match_status?.replaceAll("_", " ") || "Under Evaluation"}
+                  </strong>
+                </span>
+                {eligibility.match_score != null && (
+                  <span>
+                    Match Score: <strong>{Math.round(eligibility.match_score)}%</strong>
+                  </span>
+                )}
+              </div>
+
+              <div className="explanation-groups">
+                {/* Group A: Requirements you meet */}
+                <div className="explanation-group group-passed">
+                  <h4>
+                    <span aria-hidden="true">✓</span> Requirements you meet
+                    {eligibility.passed_rules?.length ? ` (${eligibility.passed_rules.length})` : ""}
+                  </h4>
+                  {eligibility.passed_rules?.length > 0 ? (
+                    <ul>
+                      {eligibility.passed_rules.map((rule, index) => (
+                        <li key={`passed-${rule.field || index}`}>
+                          <strong>{rule.label}:</strong> {rule.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="explanation-empty">No criteria currently marked as passed.</p>
+                  )}
+                </div>
+
+                {/* Group B: Requirements you do not meet */}
+                <div className="explanation-group group-failed">
+                  <h4>
+                    <span aria-hidden="true">✕</span> Requirements you do not meet
+                    {eligibility.failed_rules?.length ? ` (${eligibility.failed_rules.length})` : ""}
+                  </h4>
+                  {eligibility.failed_rules?.length > 0 ? (
+                    <ul>
+                      {eligibility.failed_rules.map((rule, index) => (
+                        <li key={`failed-${rule.field || index}`}>
+                          <strong>{rule.label}:</strong> {rule.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="explanation-empty">None — no disqualifying conditions identified.</p>
+                  )}
+                </div>
+
+                {/* Group C: Needs verification */}
+                <div className="explanation-group group-unknown">
+                  <h4>
+                    <span aria-hidden="true">⚠</span> Needs verification
+                    {eligibility.unknown_rules?.length ? ` (${eligibility.unknown_rules.length})` : ""}
+                  </h4>
+                  <p className="explanation-guidance">
+                    These conditions require additional documentation or cannot be confirmed from your current profile.
+                  </p>
+                  {eligibility.unknown_rules?.length > 0 ? (
+                    <ul>
+                      {eligibility.unknown_rules.map((rule, index) => (
+                        <li key={`unknown-${rule.field || index}`}>
+                          <strong>{rule.label}:</strong> {rule.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="explanation-empty">None — all criteria have been verified against your profile.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="modal-muted">Complete and save your profile to see detailed eligibility matching.</p>
+          )}
+        </section>
 
         <ReminderPreferences studentId={studentId} scholarshipId={recommendation.scholarship_id} />
 

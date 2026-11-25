@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -161,6 +162,7 @@ def test_retrieval_returns_only_category_allowlisted_official_sources(certificat
 
 def test_knowledge_manifest_fingerprints_only_curated_official_sources():
     manifest = source_manifest()
+    sources_by_id = {source["id"]: source for source in manifest}
 
     assert len(manifest) == 8
     assert all(len(source["sha256"]) == 64 for source in manifest)
@@ -175,6 +177,10 @@ def test_knowledge_manifest_fingerprints_only_curated_official_sources():
         )
         for source in manifest
     )
+    assert sources_by_id["caste-rules"]["ingestion_status"] == (
+        "excluded_no_extractable_text"
+    )
+    assert sources_by_id["caste-validity-service"]["chunk_count"] == 1
 
 
 def test_caste_validity_retrieval_uses_only_its_exact_official_directory_row():
@@ -221,6 +227,26 @@ def test_image_ocr_is_invoked_without_logging_or_persisting_document_text(monkey
 
     assert result.text == "readable"
     assert result.method == "ocr"
+
+
+def test_official_application_pdf_text_layer_is_processed_locally():
+    source_path = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "data"
+        / "certificate_sources"
+        / "originals"
+        / "income_certificate_application.pdf"
+    )
+
+    result = OCRService().extract_text(
+        source_path.read_bytes(),
+        "application/pdf",
+    )
+
+    assert result.pages_processed > 0
+    assert result.text.strip()
+    assert "pdf_text" in result.method
 
 
 def test_scanned_pdf_pages_are_rendered_and_sent_through_ocr(monkeypatch):

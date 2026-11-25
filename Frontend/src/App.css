@@ -1598,6 +1598,129 @@
   overflow-wrap: anywhere;
 }
 
+.eligibility-explanation-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.eligibility-explanation-section h3 {
+  margin: 0 0 12px;
+  color: #293651;
+  font-family: "Manrope", sans-serif;
+  font-size: 15px;
+}
+
+.eligibility-status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+.eligibility-status-banner.status-likely_eligible {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.eligibility-status-banner.status-needs_verification {
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.eligibility-status-banner.status-not_matched {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.eligibility-status-banner.status-unknown {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid var(--line);
+}
+
+.explanation-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.explanation-group {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.explanation-group.group-passed {
+  border-left: 3px solid #16a34a;
+}
+
+.explanation-group.group-failed {
+  border-left: 3px solid #dc2626;
+}
+
+.explanation-group.group-unknown {
+  border-left: 3px solid #d97706;
+}
+
+.explanation-group h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.explanation-group.group-passed h4 {
+  color: #166534;
+}
+
+.explanation-group.group-failed h4 {
+  color: #991b1b;
+}
+
+.explanation-group.group-unknown h4 {
+  color: #92400e;
+}
+
+.explanation-guidance {
+  margin: 0 0 8px;
+  color: #7b8596;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.explanation-group ul {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 5px;
+}
+
+.explanation-group li {
+  font-size: 11px;
+  color: #3b4961;
+  line-height: 1.5;
+}
+
+.explanation-group li strong {
+  color: #26344f;
+}
+
+.explanation-empty {
+  margin: 0;
+  color: #7b8596;
+  font-size: 10px;
+  font-style: italic;
+}
+
 .document-checklist {
   margin-top: 22px;
   padding-top: 18px;
