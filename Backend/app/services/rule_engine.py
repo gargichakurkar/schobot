@@ -39,29 +39,79 @@ def _normalize(value: Any) -> str:
 def _normalize_category(value: Any) -> str:
     category = re.sub(r"[^a-z0-9]+", " ", _normalize(value)).strip()
     aliases = {
-        "sebc": "obc",
-        "sc": "sc st",
-        "st": "sc st",
+        "sebc": "sebc",
+        "sc": "sc",
+        "st": "st",
         "sc st": "sc st",
+        "scst": "sc st",
         "pwd": "pwd",
         "vjnt": "vjnt",
     }
     return aliases.get(category, category)
 
 
+def _category_tokens(value: Any) -> set[str]:
+    raw = _normalize(value)
+    if not raw:
+        return set()
+    cleaned = re.sub(r"[^a-z0-9]+", " ", raw).strip()
+    if cleaned in {
+        "all",
+        "all categories",
+        "all students",
+        "any category",
+        "open to all",
+        "open to all categories",
+    }:
+        return {"all"}
+
+    parts = re.split(r"\s*(?:/|,|;|\bor\b|\band\b)\s*", raw)
+    tokens: set[str] = set()
+    for part in parts:
+        p = re.sub(r"[^a-z0-9]+", " ", part).strip()
+        if not p:
+            continue
+        if p in {"all", "all categories", "all students", "any category", "open to all"}:
+            tokens.add("all")
+        elif p == "sc":
+            tokens.add("sc")
+        elif p == "st":
+            tokens.add("st")
+        elif p in {"sc st", "scst", "sc and st", "sc or st"}:
+            tokens.add("sc")
+            tokens.add("st")
+        elif p == "sebc":
+            tokens.add("sebc")
+            tokens.add("obc")
+        elif p == "obc":
+            tokens.add("obc")
+        elif p == "ews":
+            tokens.add("ews")
+        elif p in {"vjnt", "vj", "nt", "vj/nt"}:
+            tokens.add("vjnt")
+        elif p == "sbc":
+            tokens.add("sbc")
+        elif p in {"pwd", "ph", "handicapped", "differently abled", "divyang"}:
+            tokens.add("pwd")
+        elif p in {"open", "general"}:
+            tokens.add("general")
+        else:
+            tokens.add(p)
+    return tokens
+
+
 def _category_matches(student_category: Any, scholarship_category: Any) -> bool:
-    scholarship_value = _normalize(scholarship_category)
-    if not scholarship_value:
+    scholarship_tokens = _category_tokens(scholarship_category)
+    if not scholarship_tokens:
         return False
-    normalized_scholarship = re.sub(r"[^a-z0-9]+", " ", scholarship_value).strip()
-    if normalized_scholarship in {"all", "all categories", "all students", "any category"}:
+    if "all" in scholarship_tokens:
         return True
 
-    accepted_categories = re.split(r"\s*(?:/|,|;|\bor\b|\band\b)\s*", scholarship_value)
-    student_value = _normalize_category(student_category)
-    return bool(student_value) and student_value in {
-        _normalize_category(category) for category in accepted_categories
-    }
+    student_tokens = _category_tokens(student_category)
+    if not student_tokens:
+        return False
+
+    return bool(student_tokens.intersection(scholarship_tokens))
 
 
 def _course_matches(student_course: Any, scholarship_course: Any) -> bool:
@@ -97,45 +147,85 @@ def _number(value: Any) -> float | None:
 
 
 def _normalize_level(value: Any) -> str:
-    value = _normalize(value)
-    if not value:
+    text = _normalize(value)
+    if not text:
         return ""
+    normalized = re.sub(r"[^a-z0-9]+", " ", text).strip()
     mapping = {
+        "ug": "undergraduate",
+        "undergrad": "undergraduate",
         "undergraduate": "undergraduate",
         "graduation": "undergraduate",
-        "b.tech": "undergraduate",
-        "bsc": "undergraduate",
+        "bachelor": "undergraduate",
+        "bachelors": "undergraduate",
+        "bachelor s": "undergraduate",
+        "bachelor degree": "undergraduate",
+        "bachelor s degree": "undergraduate",
+        "bachelors degree": "undergraduate",
+        "pg": "postgraduate",
+        "postgrad": "postgraduate",
+        "post graduate": "postgraduate",
+        "postgraduate": "postgraduate",
+        "post graduation": "postgraduate",
+        "master": "postgraduate",
+        "masters": "postgraduate",
+        "master s": "postgraduate",
+        "master degree": "postgraduate",
+        "master s degree": "postgraduate",
+        "masters degree": "postgraduate",
+        "postgraduate degree": "postgraduate",
+        "mba": "postgraduate",
+        "b e": "undergraduate",
+        "diploma": "diploma",
+        "iti": "diploma",
+        "industrial training institute": "diploma",
+        "polytechnic": "diploma",
+        "school": "school",
+        "school level": "school",
+        "school level education": "school",
+        "school education": "school",
         "class 9": "class 9",
         "class 10": "class 10",
         "10th": "class 10",
         "class 11": "class 11-12",
-        "class 11-12": "class 11-12",
+        "class 11 12": "class 11-12",
+        "class 11 12th": "class 11-12",
         "class 12": "class 11-12",
         "11th": "class 11-12",
         "12th": "class 11-12",
-        "diploma": "diploma",
-        "postgraduate": "postgraduate",
-        "masters": "postgraduate",
-        "master": "postgraduate",
-        "mba": "postgraduate",
         "phd": "phd",
         "doctorate": "phd",
     }
-    for key, mapped in mapping.items():
-        if key in value:
-            return mapped
-    return value
+    return mapping.get(normalized, normalized)
 
 
 def _education_levels(value: Any) -> set[str]:
-    text = _normalize(value).replace("?", "-").replace("?", "-")
+    text = _normalize(value)
+    exact_level = _normalize_level(text)
+    if exact_level == "school":
+        return {"class 9", "class 10", "class 11-12"}
+    if exact_level in {
+        "undergraduate",
+        "postgraduate",
+        "diploma",
+        "phd",
+        "class 9",
+        "class 10",
+        "class 11-12",
+    }:
+        return {exact_level}
+
     levels: set[str] = set()
 
-    if re.search(r"(?:1st|class\s*1)\s*(?:to|-)\s*(?:10th|class\s*10)", text):
+    if re.search(
+        r"\b(?:1st|class\s*1)\s*(?:to|-)\s*(?:10th|class\s*10)\b",
+        text,
+    ):
         levels.update({"class 9", "class 10"})
 
     if re.search(
-        r"(?:class(?:es)?\s*)?11\s*(?:and|&|or|-)\s*(?:class(?:es)?\s*)?12|11th\s*(?:and|&|or)\s*12th",
+        r"\b(?:class(?:es)?\s*)?11\s*(?:and|&|or|-)\s*(?:class(?:es)?\s*)?12\b"
+        r"|\b11th\s*(?:and|&|or)\s*12th\b",
         text,
     ):
         levels.add("class 11-12")
@@ -145,7 +235,11 @@ def _education_levels(value: Any) -> set[str]:
         levels.add("class 11-12")
 
     is_postgraduate = bool(
-        re.search(r"\b(?:postgraduate|post[\s-]?graduation|postgrad|master|ph\.?d|doctorate)\b", text)
+        re.search(
+            r"\b(?:post[\s-]?graduate|post[\s-]?graduation|postgrad|pg|"
+            r"master(?:'s|s)?|mba|ph\.?d|doctorate)\b",
+            text,
+        )
     )
 
     if is_postgraduate:
@@ -160,17 +254,121 @@ def _education_levels(value: Any) -> set[str]:
         levels.update({"class 11-12", "undergraduate", "postgraduate"})
 
     if re.search(
-        r"\b(?:undergraduate|under[\s-]?graduation|undergrad|bachelor|b\.?tech|b\.?sc|b\.?e\.?)\b",
+        r"\b(?:ug|undergraduate|under[\s-]?graduation|undergrad|graduation|"
+        r"bachelor(?:'s|s)?(?:\s+degree)?|b\.?tech|b\.?sc|b\.?e\.?)\b",
         text,
     ):
         levels.add("undergraduate")
-    elif "degree" in text and not is_postgraduate:
+    elif re.search(r"\bdegree\s+(?:or|and)\s+diploma\b|\bdiploma\s+(?:or|and)\s+degree\b", text):
         levels.add("undergraduate")
 
-    if re.search(r"\b(?:diploma|polytechnic)\b", text):
+    if re.search(
+        r"\b(?:diploma|polytechnic|iti|industrial training institute)\b",
+        text,
+    ):
         levels.add("diploma")
 
+    if re.search(r"\bschool[\s-]?level(?:\s+education)?\b", text):
+        levels.update({"class 9", "class 10", "class 11-12"})
+
     return levels
+
+
+def _score_scale(value: Any) -> float | None:
+    text = _normalize(value)
+    match = re.search(
+        r"(?:\b(?:out\s+of|on|scale\s+of)\s+(?:a\s+)?|/\s*)"
+        r"(\d+(?:\.\d+)?)\b"
+        r"|\b(\d+(?:\.\d+)?)\s*[- ]?point(?:s)?(?:\s+scale)?\b",
+        text,
+    )
+    if not match:
+        return None
+    return _number(match.group(1) or match.group(2))
+
+
+def _cgpa_requirement(minimum_marks_text: Any) -> tuple[float, float | None] | None:
+    text = _normalize(minimum_marks_text)
+    match = re.search(
+        r"\bcgpa\b[^0-9]{0,30}(\d+(?:\.\d+)?)"
+        r"|(\d+(?:\.\d+)?)\s*cgpa\b",
+        text,
+    )
+    if not match:
+        return None
+    threshold = _number(match.group(1) or match.group(2))
+    if threshold is None:
+        return None
+    return threshold, _score_scale(text)
+
+
+def _percentage_requirement(
+    minimum_marks_text: Any,
+) -> float | None:
+    match = re.search(
+        r"\b(\d+(?:\.\d+)?)\s*(?:%|\bpercent(?:age)?\b)",
+        _normalize(minimum_marks_text),
+    )
+    return _number(match.group(1)) if match else None
+
+
+def _special_requirement_text(scholarship: Any) -> str:
+    fields = (
+        "eligibility_details",
+        "qualification_text",
+        "additional_category_requirements",
+        "additional_education_requirements",
+        "minimum_marks_text",
+        "disability_requirement",
+        "disability",
+        "disability_text",
+    )
+    return " ".join(
+        str(value)
+        for field in fields
+        if (value := _get_value(scholarship, field))
+    ).casefold()
+
+
+def _append_boolean_rule(
+    field: str,
+    label: str,
+    student_value: Any,
+    expected: bool,
+    requirement: str,
+    passed_rules: list[dict],
+    failed_rules: list[dict],
+    unknown_rules: list[dict],
+) -> None:
+    if student_value is None:
+        status = "unknown"
+        message = f"The student {label.lower()} is missing, so this requirement cannot be confirmed."
+    elif student_value is expected:
+        status = "passed"
+        message = f"The student meets the {label.lower()} requirement."
+    else:
+        status = "failed"
+        message = f"The student does not meet the {label.lower()} requirement."
+
+    rule = _rule(field, label, student_value, requirement, status, message)
+    {"passed": passed_rules, "failed": failed_rules, "unknown": unknown_rules}[
+        status
+    ].append(rule)
+
+
+def _disability_percentage_requirement(text: str) -> float | None:
+    patterns = (
+        r"\b(?:minimum|at least|not less than)\s*(\d+(?:\.\d+)?)\s*%\s*"
+        r"(?:benchmark\s+)?disabilit\w*\b",
+        r"\bdisabilit\w*\b.{0,30}\b(?:minimum|at least|of)\s*"
+        r"(\d+(?:\.\d+)?)\s*%",
+        r"\b(\d+(?:\.\d+)?)\s*%\s*(?:or more|and above).{0,30}\bdisabilit\w*\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return _number(match.group(1))
+    return None
 
 
 def _education_years(value: Any) -> set[int]:
@@ -509,22 +707,20 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
             )
 
     # 5. Education level
+    structured_level = scholarship_value("eligible_level")
+    qualification_text = scholarship_value("qualification_text")
     scholarship_level_text = " ".join(
-        str(value)
-        for value in (
-            scholarship_value("eligible_level"),
-            scholarship_value("qualification_text"),
-        )
-        if value
+        str(value) for value in (structured_level, qualification_text) if value
     )
-    scholarship_levels = {
-        _normalize_level(level)
-        for level in _education_levels(scholarship_level_text)
-    }
-    scholarship_level = _normalize_level(scholarship_level_text)
+    scholarship_levels = _education_levels(structured_level)
+    if not scholarship_levels:
+        scholarship_levels = _education_levels(qualification_text)
     student_level = _normalize_level(student_value("education_level"))
+    student_levels = _education_levels(student_value("education_level"))
+    if not student_levels and student_level:
+        student_levels = {student_level}
     if scholarship_levels:
-        if not student_level:
+        if not student_levels:
             unknown_rules.append(
                 _rule(
                     "education_level",
@@ -535,11 +731,7 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
                     "The student education level is missing, so this rule cannot be confirmed.",
                 )
             )
-        elif student_level in scholarship_levels or (
-            student_level == "class 11-12"
-            and student_value("education_level") in {"Class 11", "Class 12"}
-            and "class 11-12" in scholarship_levels
-        ):
+        elif not student_levels.isdisjoint(scholarship_levels):
             passed_rules.append(
                 _rule(
                     "education_level",
@@ -561,7 +753,7 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
                     "The student's education level does not match the scholarship requirement.",
                 )
             )
-    elif scholarship_level:
+    elif scholarship_level_text:
         if not student_level:
             unknown_rules.append(
                 _rule(
@@ -616,7 +808,7 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
                         "This additional education requirement needs manual verification.",
                     )
                 )
-            elif not student_level:
+            elif not student_levels:
                 unknown_rules.append(
                     _rule(
                         "additional_education",
@@ -627,7 +819,7 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
                         "The student education level is missing, so this additional requirement cannot be confirmed.",
                     )
                 )
-            elif student_level in required_levels:
+            elif not student_levels.isdisjoint(required_levels):
                 passed_rules.append(
                     _rule(
                         "additional_education",
@@ -651,7 +843,16 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
                 )
 
     # Check explicit academic-year restrictions separately from education level.
-    required_years = _education_years(scholarship_level_text)
+    year_requirement_text = " ".join(
+        str(value)
+        for value in (
+            scholarship_value("year_text"),
+            structured_level,
+            qualification_text,
+        )
+        if value
+    )
+    required_years = _education_years(year_requirement_text)
     student_years = _education_years(student_value("study_year"))
 
     if required_years:
@@ -739,52 +940,112 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
         )
 
     # 7. Academic score requirement
-    min_percentage = scholarship_value("min_percentage")
-    score = student_value("academic_score")
-    if min_percentage is not None:
-        if score is None:
-            unknown_rules.append(
-                _rule(
-                    "academic_score",
-                    "Academic score requirement",
-                    score,
-                    min_percentage,
+    score = _number(student_value("academic_score"))
+    score_type = _normalize(student_value("score_type"))
+    minimum_marks_text = scholarship_value("minimum_marks_text")
+    cgpa_requirement = _cgpa_requirement(minimum_marks_text)
+    percentage_requirement = _number(scholarship_value("min_percentage"))
+    if percentage_requirement is None:
+        percentage_requirement = _percentage_requirement(minimum_marks_text)
+
+    def add_academic_rule(requirement: Any, status: str, message: str) -> None:
+        rule = _rule(
+            "academic_score",
+            "Academic score requirement",
+            score,
+            requirement,
+            status,
+            message,
+        )
+        {"passed": passed_rules, "failed": failed_rules, "unknown": unknown_rules}[
+            status
+        ].append(rule)
+
+    if score is None:
+        add_academic_rule(
+            cgpa_requirement or percentage_requirement,
+            "unknown",
+            "The student academic score is missing, so the score requirement cannot be verified.",
+        )
+    elif re.search(r"\bcgpa\b", score_type):
+        if cgpa_requirement is not None:
+            cgpa_threshold, required_scale = cgpa_requirement
+            student_scale = _score_scale(score_type)
+            requirement = {
+                "minimum": cgpa_threshold,
+                "unit": "CGPA",
+                "scale": required_scale,
+            }
+            if (
+                student_scale is None
+                or required_scale is None
+                or student_scale != required_scale
+            ):
+                add_academic_rule(
+                    requirement,
                     "unknown",
-                    "The student academic score is missing, so the minimum score requirement cannot be verified.",
+                    "The student and scholarship CGPA scales are missing or incompatible, so the score cannot be compared.",
                 )
-            )
-        elif float(score) >= float(min_percentage):
-            passed_rules.append(
-                _rule(
-                    "academic_score",
-                    "Academic score requirement",
-                    score,
-                    min_percentage,
+            elif score >= cgpa_threshold:
+                add_academic_rule(
+                    requirement,
                     "passed",
-                    "The student academic score meets the minimum requirement.",
+                    "The student CGPA meets the scholarship's CGPA requirement on the same scale.",
                 )
+            else:
+                add_academic_rule(
+                    requirement,
+                    "failed",
+                    "The student CGPA is below the scholarship's CGPA requirement.",
+                )
+        elif percentage_requirement is not None:
+            add_academic_rule(
+                {"minimum": percentage_requirement, "unit": "percentage"},
+                "unknown",
+                "A CGPA cannot be compared with the percentage requirement without a verified conversion.",
             )
         else:
-            failed_rules.append(
-                _rule(
-                    "academic_score",
-                    "Academic score requirement",
-                    score,
-                    min_percentage,
-                    "failed",
-                    "The student academic score is below the minimum required percentage.",
-                )
+            add_academic_rule(
+                "Minimum CGPA requirement not specified",
+                "unknown",
+                "No explicit CGPA requirement was stated in the scholarship.",
             )
-    else:
-        unknown_rules.append(
-            _rule(
-                "academic_score",
-                "Academic score requirement",
-                score,
-                "Minimum percentage not specified",
+    elif re.search(r"\bpercent(?:age)?\b|%", score_type):
+        if percentage_requirement is not None:
+            requirement = {"minimum": percentage_requirement, "unit": "percentage"}
+            if score >= percentage_requirement:
+                add_academic_rule(
+                    requirement,
+                    "passed",
+                    "The student percentage meets the minimum requirement.",
+                )
+            else:
+                add_academic_rule(
+                    requirement,
+                    "failed",
+                    "The student percentage is below the minimum required percentage.",
+                )
+        elif cgpa_requirement is not None:
+            add_academic_rule(
+                {
+                    "minimum": cgpa_requirement[0],
+                    "unit": "CGPA",
+                    "scale": cgpa_requirement[1],
+                },
+                "unknown",
+                "A percentage cannot be compared with the scholarship's CGPA requirement.",
+            )
+        else:
+            add_academic_rule(
+                "Minimum percentage requirement not specified",
                 "unknown",
                 "No minimum percentage was explicitly stated in the scholarship.",
             )
+    else:
+        add_academic_rule(
+            cgpa_requirement or percentage_requirement,
+            "unknown",
+            "The student score type is missing or unsupported, so the score requirement cannot be compared.",
         )
 
     # 8. Income requirement
@@ -898,40 +1159,282 @@ def evaluate_eligibility(student: Any, scholarship: Any) -> dict:
                 )
             )
 
-    # 10. Disability requirement
-    disability_flag = bool(student_value("has_disability_certificate"))
-    scholarship_disability = _normalize(scholarship_value("disability_requirement") or scholarship_value("disability") or scholarship_value("disability_text"))
-    if scholarship_disability:
-        if disability_flag:
-            passed_rules.append(
-                _rule(
-                    "disability",
-                    "Disability requirement",
-                    disability_flag,
-                    scholarship_disability,
-                    "passed",
-                    "The student qualifies under the scholarship disability requirement.",
-                )
+    special_text = _special_requirement_text(scholarship)
+
+    disability_requirement = (
+        scholarship_value("disability_requirement")
+        or scholarship_value("disability")
+        or scholarship_value("disability_text")
+    )
+    no_disability_restriction = re.search(
+        r"\b(?:no|without)\s+(?:specific\s+)?disability\s+(?:requirement|restriction)\b",
+        special_text,
+    )
+    disability_related = bool(
+        disability_requirement
+        or (
+            re.search(r"\b(?:disabilit\w*|disabled|udid)\b", special_text)
+            and not no_disability_restriction
+        )
+    )
+    if disability_related:
+        disability_threshold = _disability_percentage_requirement(special_text)
+        certificate_required = bool(
+            re.search(
+                r"\b(?:valid\s+)?disability\s+certificate\b.{0,30}"
+                r"\b(?:required|mandatory|must|shall)\b"
+                r"|\b(?:must|shall|need(?:s)? to|require(?:s|d)?)\b.{0,40}"
+                r"\b(?:valid\s+)?disability\s+certificate\b",
+                special_text,
             )
-        else:
+        )
+        udid_required = bool(
+            re.search(r"\budid\b.{0,30}\b(?:required|mandatory|must|shall)\b", special_text)
+            or re.search(r"\b(?:must|shall|need(?:s)? to|require(?:s|d)?)\b.{0,30}\budid\b", special_text)
+        )
+        specific_disability_rule = False
+
+        if disability_threshold is not None:
+            specific_disability_rule = True
+            percentage = _number(student_value("disability_percentage"))
+            requirement = f"At least {disability_threshold}% disability"
+            if percentage is None:
+                status = "unknown"
+                message = "The student disability percentage is missing, so this threshold cannot be confirmed."
+            elif percentage >= disability_threshold:
+                status = "passed"
+                message = "The student disability percentage meets the stated threshold."
+            else:
+                status = "failed"
+                message = "The student disability percentage is below the stated threshold."
+            rule = _rule(
+                "disability_percentage",
+                "Disability percentage",
+                percentage,
+                requirement,
+                status,
+                message,
+            )
+            {"passed": passed_rules, "failed": failed_rules, "unknown": unknown_rules}[
+                status
+            ].append(rule)
+
+        if certificate_required:
+            specific_disability_rule = True
+            requires_valid_certificate = bool(
+                re.search(r"\bvalid\b.{0,25}\bdisability\s+certificate\b", special_text)
+            )
+            certificate_value = student_value(
+                "has_valid_disability_certificate"
+                if requires_valid_certificate
+                else "has_disability_certificate"
+            )
+            _append_boolean_rule(
+                "has_valid_disability_certificate"
+                if requires_valid_certificate
+                else "has_disability_certificate",
+                "Valid disability certificate"
+                if requires_valid_certificate
+                else "Disability certificate",
+                certificate_value,
+                True,
+                "A disability certificate is explicitly required.",
+                passed_rules,
+                failed_rules,
+                unknown_rules,
+            )
+
+        if udid_required:
+            specific_disability_rule = True
+            _append_boolean_rule(
+                "has_udid",
+                "UDID",
+                student_value("has_udid"),
+                True,
+                "A UDID is explicitly required.",
+                passed_rules,
+                failed_rules,
+                unknown_rules,
+            )
+
+        if not specific_disability_rule:
+            disability_details = {
+                "percentage": student_value("disability_percentage"),
+                "has_valid_certificate": student_value(
+                    "has_valid_disability_certificate"
+                ),
+                "has_udid": student_value("has_udid"),
+            }
             unknown_rules.append(
                 _rule(
                     "disability",
                     "Disability requirement",
-                    disability_flag,
-                    scholarship_disability,
+                    disability_details,
+                    disability_requirement or "Disability-specific requirement",
                     "unknown",
-                    "The scholarship includes a disability-related criterion, but the student profile does not indicate a matching disability status.",
+                    "The scholarship mentions disability but does not state a specific threshold or document requirement.",
                 )
             )
+
+    orphan_requirement = re.search(r"\borphan(?:s|ed)?\b", special_text)
+    if orphan_requirement:
+        requires_orphan = not bool(
+            re.search(r"\b(?:non[-\s]?orphan|not\s+(?:an?\s+)?orphan)\b", special_text)
+        )
+        _append_boolean_rule(
+            "is_orphan",
+            "Orphan status",
+            student_value("is_orphan"),
+            requires_orphan,
+            "The scholarship explicitly states an orphan-status condition.",
+            passed_rules,
+            failed_rules,
+            unknown_rules,
+        )
+
+    parent_covid_requirement = (
+        "covid" in special_text
+        and re.search(r"\b(?:parent|father|mother)\b", special_text)
+        and re.search(r"\b(?:death|died|deceased|demise)\b", special_text)
+    )
+    if parent_covid_requirement:
+        _append_boolean_rule(
+            "parent_death_due_to_covid",
+            "Parent death due to COVID",
+            student_value("parent_death_due_to_covid"),
+            True,
+            "The scholarship explicitly requires a parent's death due to COVID.",
+            passed_rules,
+            failed_rules,
+            unknown_rules,
+        )
+
+    parent_martyr_requirement = (
+        re.search(r"\b(?:parent|father|mother|ward)\b", special_text)
+        and re.search(r"\b(?:martyr|martyred|killed)\b", special_text)
+        and re.search(r"\b(?:armed forces|army|military|defence|defense)\b", special_text)
+    )
+    if parent_martyr_requirement:
+        _append_boolean_rule(
+            "parent_martyred_armed_forces",
+            "Parent martyred in the armed forces",
+            student_value("parent_martyred_armed_forces"),
+            True,
+            "The scholarship explicitly requires a parent martyred in the armed forces.",
+            passed_rules,
+            failed_rules,
+            unknown_rules,
+        )
+
+    rpf_requirement = bool(
+        re.search(r"\b(?:rpf|rpsf|railway protection force)\b", special_text)
+        and re.search(r"\b(?:dependent|dependant|ward|child|children)\b", special_text)
+    )
+    if rpf_requirement:
+        _append_boolean_rule(
+            "is_dependent_of_rpf_rpsf",
+            "RPF/RPSF dependent status",
+            student_value("is_dependent_of_rpf_rpsf"),
+            True,
+            "The scholarship explicitly requires an RPF/RPSF dependent.",
+            passed_rules,
+            failed_rules,
+            unknown_rules,
+        )
+
+    if re.search(r"\b(?:rpf|rpsf|railway protection force)\b", special_text):
+        required_service_categories = {
+            value
+            for value in ("serving", "retired", "deceased", "martyred")
+            if re.search(rf"\b{value}\b", special_text)
+        }
+        if required_service_categories:
+            service_category = _normalize(student_value("parent_service_category"))
+            student_service_categories = {
+                category
+                for category in ("serving", "retired", "deceased", "martyred")
+                if re.search(rf"\b{category}\b", service_category)
+            }
+            if not service_category:
+                status = "unknown"
+                message = "The student's parent service category is missing, so this requirement cannot be confirmed."
+            elif not student_service_categories.isdisjoint(
+                required_service_categories
+            ):
+                status = "passed"
+                message = "The student's parent service category matches the stated requirement."
+            else:
+                status = "failed"
+                message = "The student's parent service category does not match the stated requirement."
+            rule = _rule(
+                "parent_service_category",
+                "Parent service category",
+                service_category or None,
+                sorted(required_service_categories),
+                status,
+                message,
+            )
+            {"passed": passed_rules, "failed": failed_rules, "unknown": unknown_rules}[
+                status
+            ].append(rule)
+
+    previous_year_pass_requirement = (
+        re.search(r"\b(?:previous|preceding|last)\s+(?:academic\s+)?year\b", special_text)
+        and re.search(r"\bpassed\b", special_text)
+    )
+    if previous_year_pass_requirement:
+        _append_boolean_rule(
+            "previous_year_passed",
+            "Previous year passed",
+            student_value("previous_year_passed"),
+            True,
+            "The scholarship explicitly requires passing the previous year.",
+            passed_rules,
+            failed_rules,
+            unknown_rules,
+        )
+
+    no_other_scholarship_requirement = re.search(
+        r"\b(?:not|no|cannot|must\s+not|shall\s+not|should\s+not)\b.{0,50}"
+        r"\b(?:receive|receiving|avail|availing)\b.{0,40}"
+        r"\b(?:another|other)\s+scholarship\b",
+        special_text,
+    )
+    if no_other_scholarship_requirement:
+        _append_boolean_rule(
+            "receives_other_scholarship",
+            "Other scholarship status",
+            student_value("receives_other_scholarship"),
+            False,
+            "The scholarship explicitly requires that the student not receive another scholarship.",
+            passed_rules,
+            failed_rules,
+            unknown_rules,
+        )
 
     # scoring
     score = 100
     for rule in failed_rules:
-        if rule["field"] in {"active", "deadline", "domicile_state", "category", "additional_category", "education_level", "additional_education", "study_year", "course", "academic_score", "income", "additional_income", "gender", "disability"}:
+        if rule["field"] in {
+            "active", "deadline", "domicile_state", "category", "additional_category",
+            "education_level", "additional_education", "study_year", "course",
+            "academic_score", "income", "additional_income", "gender", "disability",
+            "disability_percentage", "has_valid_disability_certificate", "has_disability_certificate",
+            "has_udid", "is_orphan", "parent_death_due_to_covid",
+            "parent_martyred_armed_forces", "is_dependent_of_rpf_rpsf",
+            "parent_service_category", "previous_year_passed", "receives_other_scholarship",
+        }:
             score -= 25
     for rule in unknown_rules:
-        if rule["field"] in {"deadline", "domicile_state", "category", "additional_category", "education_level", "additional_education", "study_year", "course", "academic_score", "income", "additional_income", "gender", "disability"}:
+        if rule["field"] in {
+            "deadline", "domicile_state", "category", "additional_category",
+            "education_level", "additional_education", "study_year", "course",
+            "academic_score", "income", "additional_income", "gender", "disability",
+            "disability_percentage", "has_valid_disability_certificate", "has_disability_certificate",
+            "has_udid", "is_orphan", "parent_death_due_to_covid",
+            "parent_martyred_armed_forces", "is_dependent_of_rpf_rpsf",
+            "parent_service_category", "previous_year_passed", "receives_other_scholarship",
+        }:
             score -= 10
     if student_state and scholarship_state and student_state == scholarship_state:
         score += 5

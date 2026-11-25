@@ -44,32 +44,18 @@ def submit_and_recommend(payload: StudentProfileCreate, db: Session = Depends(ge
     service = ProfileService(db)
     student = service.create_profile(payload)
 
-    scholarships = (
-        db.query(Scholarship)
-        .filter(
-            Scholarship.scholarship_name != "Untitled Scholarship",
-            or_(
-                Scholarship.is_active.is_(True),
-                Scholarship.active_status == "unknown",
-            )
-        )
-        .all()
-    )
+    matching_service = MatchingService(db)
+    matches = matching_service.recalculate_matches_for_student(student)
+
+    scholarships_by_id = {
+        s.id: s
+        for s in db.query(Scholarship).filter(Scholarship.id.in_([m.scholarship_id for m in matches])).all()
+    }
     recommendations = []
-    matches = []
-    for scholarship in scholarships:
-        result = evaluate_eligibility(student, scholarship)
-        match = ScholarshipMatch(
-            student_id=student.id,
-            scholarship_id=scholarship.id,
-            match_status=result["match_status"],
-            match_score=result["match_score"],
-            passed_rules=result["passed_rules"],
-            failed_rules=result["failed_rules"],
-            unknown_rules=result["unknown_rules"],
-            warnings=result["warnings"],
-        )
-        matches.append(match)
+    for match in matches:
+        scholarship = scholarships_by_id.get(match.scholarship_id)
+        if scholarship is None:
+            continue
         recommendations.append(
             {
                 "scholarship_id": scholarship.id,
@@ -78,18 +64,16 @@ def submit_and_recommend(payload: StudentProfileCreate, db: Session = Depends(ge
                 "scholarship_type": scholarship.scholarship_type,
                 "deadline": scholarship.deadline,
                 "official_link": scholarship.official_link,
-                "match_status": result["match_status"],
-                "match_score": result["match_score"],
+                "match_status": match.match_status,
+                "match_score": match.match_score,
                 "doc_status": "not_started",
-                "passed_rules": result["passed_rules"],
-                "failed_rules": result["failed_rules"],
-                "unknown_rules": result["unknown_rules"],
-                "warnings": result["warnings"],
+                "passed_rules": match.passed_rules or [],
+                "failed_rules": match.failed_rules or [],
+                "unknown_rules": match.unknown_rules or [],
+                "warnings": match.warnings or [],
             }
         )
 
-    db.add_all(matches)
-    db.commit()
     recommendations = dedupe_by_scholarship_id(sort_matches(recommendations))
     return {
         "student": StudentProfileResponse.model_validate(student),
@@ -104,6 +88,8 @@ def get_recommendations(student_id: str, db: Session = Depends(get_db)):
     if student is None:
         raise HTTPException(status_code=404, detail="Student profile not found")
     matches = db.query(ScholarshipMatch).filter(ScholarshipMatch.student_id == student_id).all()
+    if not matches:
+        matches = MatchingService(db).recalculate_matches_for_student(student)
     progress_by_scholarship = {
         progress.scholarship_id: progress
         for progress in db.query(StudentScholarshipProgress)

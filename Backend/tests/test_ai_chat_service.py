@@ -11,6 +11,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.models import Scholarship
+from app.models.scholarship_match import ScholarshipMatch
+from app.models.student_profile import StudentProfile
 from app.services.ai_chat_service import AIChatService
 
 
@@ -34,8 +36,8 @@ def add_scholarship(db_session, name: str, **values) -> Scholarship:
     scholarship = Scholarship(
         scholarship_name=name,
         provider=values.pop("provider", "Government of India"),
-        is_active=False,
-        active_status="unknown",
+        is_active=values.pop("is_active", False),
+        active_status=values.pop("active_status", "unknown"),
         **values,
     )
     db_session.add(scholarship)
@@ -43,10 +45,81 @@ def add_scholarship(db_session, name: str, **values) -> Scholarship:
     return scholarship
 
 
+def add_student(db_session, **values) -> StudentProfile:
+    student_values = {
+        "full_name": "Asha Verma",
+        "education_level": "Undergraduate",
+        "course": "B.Tech",
+        "study_year": "2nd Year",
+        "academic_score": 88,
+        "score_type": "Percentage",
+        "domicile_state": "Maharashtra",
+        "study_state": "Maharashtra",
+        "category": "General",
+        "gender": "Female",
+        "annual_family_income": 150000,
+    }
+    student_values.update(values)
+    student = StudentProfile(**student_values)
+    db_session.add(student)
+    db_session.commit()
+    db_session.refresh(student)
+    return student
+
+
+def test_missing_disability_certificate_stays_unknown_on_new_profile(db_session):
+    student = add_student(db_session)
+
+    assert student.has_disability_certificate is None
+
+
 def make_service(db_session) -> AIChatService:
     service = AIChatService.__new__(AIChatService)
     service.db = db_session
     return service
+
+
+def configure_fake_completion(service: AIChatService):
+    class FakeCompletions:
+        request = None
+
+        def create(self, **kwargs):
+            self.request = kwargs
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="Eligibility details are shown.")
+                    )
+                ]
+            )
+
+    completions = FakeCompletions()
+    service.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    service.model = "test-model"
+    return completions
+
+
+def add_eligible_scholarship(db_session, **overrides) -> Scholarship:
+    values = {
+        "state": "All India",
+        "category": "General",
+        "eligible_level": "Undergraduate",
+        "qualification_text": "Undergraduate students",
+        "eligible_course": "B.Tech",
+        "min_percentage": 75,
+        "max_income": 250000,
+        "deadline": datetime(2035, 3, 31, tzinfo=timezone.utc),
+        "is_active": True,
+        "active_status": "open",
+        "official_link": "https://scholarships.gov.in/apply",
+        "required_documents": "Documents: Income Certificate; Academic Marksheets",
+    }
+    values.update(overrides)
+    return add_scholarship(
+        db_session,
+        "Pragati Scholarship Scheme for Girl Students",
+        **values,
+    )
 
 
 def test_query_tokenization_removes_generic_terms_and_normalizes_plurals():
@@ -193,3 +266,165 @@ def test_broad_question_with_no_discriminative_terms_asks_for_clarification(
 
     assert response["sources"] == []
     assert "narrow your question" in response["answer"]
+
+
+def test_personalized_eligibility_question_includes_rule_engine_results(db_session):
+    student = add_student(db_session)
+    scholarship = add_eligible_scholarship(db_session)
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    response = service.answer(
+        "Am I eligible for Pragati Scholarship?",
+        student_id=student.id,
+    )
+
+    user_message = completions.request["messages"][1]["content"]
+    context = json.loads(user_message.split("Available database context:\n", 1)[1])
+    assert response["sources"][0]["scholarship_id"] == scholarship.id
+    assert len(context["eligibility_results"]) == 1
+    result = context["eligibility_results"][0]
+    assert result["scholarship_name"] == scholarship.scholarship_name
+    assert result["official_link"] == scholarship.official_link
+    assert result["match_status"] == "likely_eligible"
+    assert result["match_score"] > 0
+    assert result["passed_rules"]
+    assert result["failed_rules"] == []
+    assert result["unknown_rules"] == []
+    assert result["warnings"] == []
+
+
+def test_why_am_i_eligible_recomputes_candidate_instead_of_trusting_saved_match(
+    db_session,
+):
+    student = add_student(db_session)
+    scholarship = add_eligible_scholarship(db_session)
+    db_session.add(
+        ScholarshipMatch(
+            student_id=student.id,
+            scholarship_id=scholarship.id,
+            match_status="not_matched",
+            match_score=1,
+        )
+    )
+    db_session.commit()
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    service.answer("Why am I eligible?", student_id=student.id)
+
+    user_message = completions.request["messages"][1]["content"]
+    context = json.loads(user_message.split("Available database context:\n", 1)[1])
+    assert context["eligibility_results"][0]["match_status"] == "likely_eligible"
+    assert db_session.query(ScholarshipMatch).count() == 1
+
+
+def test_why_am_i_not_eligible_explains_failed_engine_rules(db_session):
+    student = add_student(db_session, category="SC")
+    scholarship = add_eligible_scholarship(db_session)
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    service.answer(
+        "Why am I not eligible for Pragati Scholarship?",
+        student_id=student.id,
+    )
+
+    user_message = completions.request["messages"][1]["content"]
+    context = json.loads(user_message.split("Available database context:\n", 1)[1])
+    result = context["eligibility_results"][0]
+    assert result["match_status"] == "not_matched"
+    assert any(rule["field"] == "category" for rule in result["failed_rules"])
+
+
+def test_missing_profile_requests_profile_before_personalizing(db_session):
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    response = service.answer(
+        "Am I eligible for Pragati Scholarship?",
+        student_id="00000000-0000-4000-8000-000000000001",
+    )
+
+    assert "complete and save your student profile" in response["answer"]
+    assert response["sources"] == []
+    assert completions.request is None
+
+
+def test_eligibility_question_with_no_relevant_scholarships_returns_no_match_message(
+    db_session,
+):
+    student = add_student(db_session)
+    service = make_service(db_session)
+    service.client = SimpleNamespace()
+
+    response = service.answer(
+        "Am I eligible for the Unlisted Opportunity?",
+        student_id=student.id,
+    )
+
+    assert response["sources"] == []
+    assert "couldn't find relevant scholarship records" in response["answer"]
+
+
+def test_generic_scholarship_question_without_student_id_stays_general(db_session):
+    scholarship = add_eligible_scholarship(db_session)
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    response = service.answer("Tell me about Pragati Scholarship")
+
+    user_message = completions.request["messages"][1]["content"]
+    context = json.loads(user_message.split("Available database context:\n", 1)[1])
+    assert response["sources"][0]["scholarship_id"] == scholarship.id
+    assert context["student_profile"] is None
+    assert "eligibility_results" not in context
+
+
+def test_chat_does_not_create_scholarship_match_rows(db_session):
+    student = add_student(db_session)
+    add_eligible_scholarship(db_session)
+    service = make_service(db_session)
+    configure_fake_completion(service)
+
+    assert db_session.query(ScholarshipMatch).count() == 0
+    service.answer(
+        "Am I eligible for Pragati Scholarship?",
+        student_id=student.id,
+    )
+    assert db_session.query(ScholarshipMatch).count() == 0
+
+
+def test_documents_question_includes_required_documents(db_session):
+    scholarship = add_eligible_scholarship(db_session)
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    service.answer("What documents do I need for Pragati Scholarship?")
+
+    user_message = completions.request["messages"][1]["content"]
+    context = json.loads(user_message.split("Available database context:\n", 1)[1])
+    assert context["scholarships"][0]["documents"] == scholarship.required_documents
+
+
+def test_generic_documents_question_uses_existing_student_recommendations(db_session):
+    student = add_student(db_session)
+    scholarship = add_eligible_scholarship(db_session)
+    db_session.add(
+        ScholarshipMatch(
+            student_id=student.id,
+            scholarship_id=scholarship.id,
+            match_status="likely_eligible",
+            match_score=95,
+        )
+    )
+    db_session.commit()
+    service = make_service(db_session)
+    completions = configure_fake_completion(service)
+
+    service.answer("What documents do I need?", student_id=student.id)
+
+    user_message = completions.request["messages"][1]["content"]
+    context = json.loads(user_message.split("Available database context:\n", 1)[1])
+    assert context["scholarships"][0]["documents"] == scholarship.required_documents
+    assert db_session.query(ScholarshipMatch).count() == 1

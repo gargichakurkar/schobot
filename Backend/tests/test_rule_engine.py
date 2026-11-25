@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.rule_engine import evaluate_eligibility
 
 
@@ -103,6 +105,56 @@ def test_sc_st_profile_matches_sc_or_st_requirements():
         assert result["match_status"] == "likely_eligible"
 
 
+def test_sc_student_does_not_match_st_exclusive_scholarship():
+    result = evaluate_eligibility(
+        build_student(category="SC"),
+        build_scholarship(category="ST"),
+    )
+    assert result["match_status"] == "not_matched"
+
+
+def test_st_student_does_not_match_sc_exclusive_scholarship():
+    result = evaluate_eligibility(
+        build_student(category="ST"),
+        build_scholarship(category="SC"),
+    )
+    assert result["match_status"] == "not_matched"
+
+
+def test_sc_student_matches_sc_and_sc_st_scholarships():
+    for scholarship_category in ("SC", "SC/ST", "SC, ST", "SC or ST"):
+        result = evaluate_eligibility(
+            build_student(category="SC"),
+            build_scholarship(category=scholarship_category),
+        )
+        assert result["match_status"] == "likely_eligible"
+
+
+def test_st_student_matches_st_and_sc_st_scholarships():
+    for scholarship_category in ("ST", "SC/ST", "SC, ST", "SC or ST"):
+        result = evaluate_eligibility(
+            build_student(category="ST"),
+            build_scholarship(category=scholarship_category),
+        )
+        assert result["match_status"] == "likely_eligible"
+
+
+def test_ews_and_obc_distinction():
+    # EWS student should not match OBC scholarship
+    result = evaluate_eligibility(
+        build_student(category="EWS"),
+        build_scholarship(category="OBC"),
+    )
+    assert result["match_status"] == "not_matched"
+
+    # OBC student should not match EWS scholarship
+    result = evaluate_eligibility(
+        build_student(category="OBC"),
+        build_scholarship(category="EWS"),
+    )
+    assert result["match_status"] == "not_matched"
+
+
 def test_vjnt_and_pwd_categories_match_exact_requirements():
     for category in ("VJNT", "PWD"):
         result = evaluate_eligibility(
@@ -110,6 +162,7 @@ def test_vjnt_and_pwd_categories_match_exact_requirements():
             build_scholarship(category=category),
         )
         assert result["match_status"] == "likely_eligible"
+
 
 
 def test_all_students_course_requirement_is_not_a_mismatch():
@@ -155,6 +208,46 @@ def test_marks_too_low_returns_not_matched():
     assert any(rule["field"] == "academic_score" and rule["status"] == "failed" for rule in result["failed_rules"])
 
 
+def test_cgpa_is_unknown_against_percentage_threshold_without_conversion():
+    result = evaluate_eligibility(
+        build_student(academic_score=9.67, score_type="CGPA"),
+        build_scholarship(min_percentage=60),
+    )
+
+    assert result["match_status"] == "needs_verification"
+    assert any(
+        rule["field"] == "academic_score" and rule["status"] == "unknown"
+        for rule in result["unknown_rules"]
+    )
+
+
+def test_cgpa_compares_when_both_explicit_scales_match():
+    result = evaluate_eligibility(
+        build_student(academic_score=9.67, score_type="CGPA out of 10"),
+        build_scholarship(
+            min_percentage=None,
+            minimum_marks_text="Minimum CGPA 8.0 on a 10-point scale",
+        ),
+    )
+
+    assert any(
+        rule["field"] == "academic_score" and rule["status"] == "passed"
+        for rule in result["passed_rules"]
+    )
+
+
+def test_percentage_score_keeps_comparing_to_percentage_requirement():
+    result = evaluate_eligibility(
+        build_student(academic_score=80, score_type="Percentage"),
+        build_scholarship(min_percentage=60),
+    )
+
+    assert any(
+        rule["field"] == "academic_score" and rule["status"] == "passed"
+        for rule in result["passed_rules"]
+    )
+
+
 def test_missing_category_when_required_returns_needs_verification():
     result = evaluate_eligibility(
         build_student(category=None),
@@ -171,6 +264,35 @@ def test_unclear_qualification_returns_needs_verification():
     )
     assert result["match_status"] == "needs_verification"
     assert any(rule["field"] == "education_level" and rule["status"] == "unknown" for rule in result["unknown_rules"])
+
+
+def test_undergraduate_profile_matches_graduation_requirement():
+    result = evaluate_eligibility(
+        build_student(education_level="Undergraduate"),
+        build_scholarship(eligible_level="Graduation"),
+    )
+
+    assert any(
+        rule["field"] == "education_level" and rule["status"] == "passed"
+        for rule in result["passed_rules"]
+    )
+
+
+def test_undergraduate_does_not_match_postgraduate_word_in_long_description():
+    result = evaluate_eligibility(
+        build_student(education_level="Undergraduate"),
+        build_scholarship(
+            eligible_level="Undergraduate",
+            qualification_text=(
+                "Undergraduate students must not already hold a postgraduate degree."
+            ),
+        ),
+    )
+
+    assert not any(
+        rule["field"] == "education_level" and rule["status"] == "failed"
+        for rule in result["failed_rules"]
+    )
 
 
 def test_expired_scholarship_returns_expired():
@@ -247,6 +369,117 @@ def test_additional_income_requirement_blocks_unverified_eligibility():
         rule["field"] == "additional_income" and rule["status"] == "unknown"
         for rule in result["unknown_rules"]
     )
+
+
+def test_missing_disability_value_remains_unknown_not_false():
+    result = evaluate_eligibility(
+        build_student(has_disability_certificate=None),
+        build_scholarship(disability_requirement="Disability certificate required"),
+    )
+
+    disability_rule = next(
+        rule
+        for rule in result["unknown_rules"]
+        if rule["field"] == "has_disability_certificate"
+    )
+    assert disability_rule["student_value"] is None
+    assert result["match_status"] == "needs_verification"
+
+
+def test_null_disability_details_are_unknown_for_disability_specific_scholarship():
+    result = evaluate_eligibility(
+        build_student(
+            disability_percentage=None,
+            has_disability_certificate=None,
+            has_valid_disability_certificate=None,
+            has_udid=None,
+        ),
+        build_scholarship(
+            eligibility_details="Scholarship is for students with disabilities."
+        ),
+    )
+
+    assert any(
+        rule["field"] == "disability" and rule["status"] == "unknown"
+        for rule in result["unknown_rules"]
+    )
+
+
+def test_false_disability_certificate_fails_when_valid_certificate_is_mandatory():
+    result = evaluate_eligibility(
+        build_student(has_valid_disability_certificate=False),
+        build_scholarship(
+            eligibility_details="Applicants must have a valid disability certificate."
+        ),
+    )
+
+    assert any(
+        rule["field"] == "has_valid_disability_certificate"
+        and rule["status"] == "failed"
+        for rule in result["failed_rules"]
+    )
+
+
+def test_null_orphan_status_is_unknown_for_orphan_requirement():
+    result = evaluate_eligibility(
+        build_student(is_orphan=None),
+        build_scholarship(eligibility_details="Applicants must be orphans."),
+    )
+
+    assert any(
+        rule["field"] == "is_orphan" and rule["status"] == "unknown"
+        for rule in result["unknown_rules"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "requirement"),
+    [
+        (
+            "parent_death_due_to_covid",
+            "Applicants whose parent died due to COVID-19 are eligible.",
+        ),
+        (
+            "parent_martyred_armed_forces",
+            "Applicants whose parent was martyred in the armed forces are eligible.",
+        ),
+        (
+            "is_dependent_of_rpf_rpsf",
+            "Applicants must be dependent wards of RPF/RPSF staff.",
+        ),
+        (
+            "parent_service_category",
+            "Wards of retired RPF staff are eligible.",
+        ),
+        (
+            "previous_year_passed",
+            "Applicants must have passed the previous academic year.",
+        ),
+        (
+            "receives_other_scholarship",
+            "Students must not receive any other scholarship.",
+        ),
+        (
+            "has_udid",
+            "A valid UDID is mandatory.",
+        ),
+        (
+            "disability_percentage",
+            "Applicants must have at least 40% disability.",
+        ),
+    ],
+)
+def test_missing_special_eligibility_fields_remain_unknown(field, requirement):
+    result = evaluate_eligibility(
+        build_student(**{field: None}),
+        build_scholarship(eligibility_details=requirement),
+    )
+
+    assert any(
+        rule["field"] == field and rule["status"] == "unknown"
+        for rule in result["unknown_rules"]
+    )
+
 
 def test_third_year_student_does_not_match_first_year_only_scholarship():
     result = evaluate_eligibility(

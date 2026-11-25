@@ -42,7 +42,7 @@ class StudentProfile(Base):
     # Academic and other scholarship conditions
     previous_year_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     receives_other_scholarship: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
-    has_disability_certificate: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    has_disability_certificate: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     annual_family_income: Mapped[float | None] = mapped_column(Float, nullable=True)
     has_income_certificate: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     profile_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

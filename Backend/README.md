@@ -65,6 +65,74 @@ recommendations remain profile-based; records with unknown current status can
 be evaluated but are not labeled currently active, and unsupported criteria
 remain `needs_verification`.
 
+## Incremental official scholarship fetching
+
+The fetcher currently has one operational adapter: the National Scholarship
+Portal (NSP). AICTE and MahaDBT remain disabled until their adapters are
+implemented and tested. The fetcher keeps the existing 13-column dataset
+mapping; it does not change the CSV files.
+
+Run one discovery-only cycle from `Backend`:
+
+```powershell
+python -m app.services.scholarship_fetcher.nsp_fetcher --discovery-only --source nsp
+```
+
+Discovery-only mode does not insert or update rows in `scholarships`, but it
+does write ingestion run, state, and event records. It also creates the four
+ingestion trace tables if they do not exist. Therefore, it is not a no-write
+operation and should only be run against a local/test database unless that
+trace-table creation has been approved for the target database.
+
+To persist validated new and changed NSP records, run:
+
+```powershell
+python -m app.services.scholarship_fetcher.nsp_fetcher --persist --source nsp
+```
+
+Do not use `--schedule` for Render Cron Jobs; each cron invocation is already a
+single run. Configure the Render Cron Job with:
+
+- **Root directory:** `Backend`
+- **Build command:** `pip install -r requirements.txt`
+- **Command:** `python -m app.services.scholarship_fetcher.nsp_fetcher --persist --source nsp`
+- **Schedule:** `0 2 * * *` (Render cron time is UTC; this is 7:30 AM IST)
+
+Set `DATABASE_URL` to the approved PostgreSQL connection string. `GROQ_API_KEY`
+is optional: without it, deterministic extraction continues and fields that
+cannot be verified remain unknown. If Groq extraction is enabled, the fetcher
+uses the configured `GROQ_MODEL`. Never put credentials in the command or
+repository.
+
+The fetcher records run status, counts, application periods, per-record
+previous/current hashes, and errors in the ingestion trace tables. Review the
+latest Render job logs and run record before treating a cycle as successful:
+
+```sql
+SELECT started_at, completed_at, status, statistics, error
+FROM scholarship_ingestion_runs
+WHERE source_key = 'nsp'
+ORDER BY started_at DESC
+LIMIT 10;
+```
+
+NSP requests use a descriptive `ScholarMateScholarshipFetcher` user agent and
+check the source's `robots.txt` policy before fetching. A missing robots file
+(HTTP 404) is treated as no published robots rules; access-denied, rate-limited,
+and server-error responses fail closed. The code applies a one-second interval
+between guideline requests and retries transient failures with backoff,
+honoring short `Retry-After` values on rate limits. It defers a retry when the
+requested wait exceeds its configured limit. This does not replace checking
+NSP's current terms of use; no live fetch has been performed as part of local
+validation.
+
+The repository has no separate migration file for the ingestion trace tables;
+the fetch command creates those tables through SQLAlchemy `create_all()` if
+they are absent. Confirm the production database owner approves this
+non-destructive schema creation and that the job's database role has the
+required `CREATE TABLE` permission before enabling the Render job. The fetcher
+does not delete scholarships merely because they are absent from a listing.
+
 ## Scholarship deadlines and documents
 
 Recommendation responses include each scholarship's existing `deadline` and

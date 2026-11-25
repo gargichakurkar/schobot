@@ -10,12 +10,31 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.scholarship import Scholarship
+from app.models.scholarship_match import ScholarshipMatch
 from app.models.student_profile import StudentProfile
+from app.services.rule_engine import evaluate_eligibility
 
 
 MIN_RELEVANCE_SCORE = 0.38
 MAX_RETRIEVAL_RESULTS = 6
 RESPONSE_LANGUAGE_DIRECTIVE = re.compile(r"^\[lang=(en|hi)\]\s*", re.IGNORECASE)
+ELIGIBILITY_QUESTION = re.compile(
+    r"\b(?:eligib(?:le|ility)|qualif(?:y|ied|ication)|criteria|requirements?)\b"
+    r"|\b(?:can|could|may|do)\s+i\s+(?:apply|qualify|meet|satisfy|get|receive)\b"
+    r"|पात्र|योग्य|अर्ह",
+    re.IGNORECASE,
+)
+DOCUMENTS_QUESTION = re.compile(
+    r"\b(?:documents?|paperwork)\b",
+    re.IGNORECASE,
+)
+ELIGIBILITY_INTENT_TOKENS = {
+    "eligible", "eligibility", "qualify", "qualified", "qualification",
+    "why", "am", "i", "not", "can", "could", "may", "apply", "do",
+    "for", "any", "scholarship", "scholarships", "my", "meet", "satisfy",
+    "criteria", "requirement", "requirements", "get", "receive",
+}
+MAX_STUDENT_CANDIDATES = 6
 FIELD_WEIGHTS = {
     "scholarship_name": 4.0,
     "provider": 1.4,
@@ -140,6 +159,61 @@ class AIChatService:
         )
         return [item[1] for item in ranked[:MAX_RETRIEVAL_RESULTS]]
 
+    def _retrieve_student_match_scholarships(
+        self,
+        student_id: str,
+        question: str,
+    ) -> list[Scholarship]:
+        match_order = (
+            ScholarshipMatch.match_score.asc()
+            if re.search(r"\bnot\b", question, re.IGNORECASE)
+            else ScholarshipMatch.match_score.desc()
+        )
+        match_rows = (
+            self.db.query(ScholarshipMatch.scholarship_id)
+            .filter(ScholarshipMatch.student_id == student_id)
+            .order_by(match_order)
+            .limit(MAX_STUDENT_CANDIDATES)
+            .all()
+        )
+        scholarship_ids = list(dict.fromkeys(row[0] for row in match_rows))
+        if not scholarship_ids:
+            return []
+
+        scholarships_by_id = {
+            item.id: item
+            for item in self.db.query(Scholarship)
+            .filter(Scholarship.id.in_(scholarship_ids))
+            .all()
+        }
+        return [
+            scholarships_by_id[scholarship_id]
+            for scholarship_id in scholarship_ids
+            if scholarship_id in scholarships_by_id
+        ]
+
+    @classmethod
+    def _is_eligibility_question(cls, question: str) -> bool:
+        return bool(ELIGIBILITY_QUESTION.search(question))
+
+    @staticmethod
+    def _is_documents_question(question: str) -> bool:
+        return bool(DOCUMENTS_QUESTION.search(question))
+
+    @classmethod
+    def _is_broad_eligibility_question(cls, question: str) -> bool:
+        return cls._is_eligibility_question(question) and not (
+            cls._tokens(question) - ELIGIBILITY_INTENT_TOKENS
+        )
+
+    @classmethod
+    def _eligibility_retrieval_question(cls, question: str) -> str:
+        return " ".join(
+            token
+            for token in cls._normalized_tokens(question)
+            if token not in ELIGIBILITY_INTENT_TOKENS
+        )
+
     @staticmethod
     def _profile_context(student: StudentProfile | None) -> dict | None:
         if student is None:
@@ -179,6 +253,7 @@ class AIChatService:
         if not question:
             raise ValueError("Question cannot be empty")
 
+        eligibility_question = self._is_eligibility_question(question)
         student = None
 
         if student_id:
@@ -188,10 +263,34 @@ class AIChatService:
                 .first()
             )
 
-            if student is None:
-                raise ValueError("Student profile not found")
+        if eligibility_question and student is None:
+            return {
+                "answer": (
+                    "To get personalized eligibility results, please complete "
+                    "and save your student profile first."
+                ),
+                "sources": [],
+            }
 
-        scholarships = self._retrieve_scholarships(question)
+        retrieval_question = (
+            self._eligibility_retrieval_question(question)
+            if eligibility_question
+            else question
+        )
+        scholarships = self._retrieve_scholarships(retrieval_question)
+        if (
+            not scholarships
+            and student is not None
+            and student_id
+            and (
+                self._is_broad_eligibility_question(question)
+                or self._is_documents_question(question)
+            )
+        ):
+            scholarships = self._retrieve_student_match_scholarships(
+                student_id,
+                question,
+            )
 
         if not scholarships:
             if not self._tokens(question):
@@ -213,33 +312,46 @@ class AIChatService:
             }
 
         scholarship_context = []
+        eligibility_results = []
 
         for item in scholarships:
             status = self._application_status(item.active_status)
-            scholarship_context.append(
-                {
-                    "scholarship_id": item.id,
-                    "name": item.scholarship_name,
-                    "provider": item.provider,
-                    "category": item.category,
-                    "state": item.state,
-                    "eligibility": item.eligibility_details,
-                    "qualification": item.qualification_text,
-                    "benefits": item.benefits,
-                    "documents": item.required_documents,
-                    "income_criteria": item.income_text,
-                    "minimum_marks": item.minimum_marks_text,
-                    "deadline": item.deadline.isoformat() if item.deadline else None,
-                    "active_status": status,
-                    "application_status": status,
+            scholarship_context.append({
+                "scholarship_id": item.id,
+                "name": item.scholarship_name,
+                "provider": item.provider,
+                "category": item.category,
+                "state": item.state,
+                "eligibility": item.eligibility_details,
+                "qualification": item.qualification_text,
+                "benefits": item.benefits,
+                "documents": item.required_documents,
+                "income_criteria": item.income_text,
+                "minimum_marks": item.minimum_marks_text,
+                "deadline": item.deadline.isoformat() if item.deadline else None,
+                "active_status": status,
+                "application_status": status,
+                "official_link": item.official_link,
+            })
+            if eligibility_question and student is not None:
+                result = evaluate_eligibility(student, item)
+                eligibility_results.append({
+                    "scholarship_name": item.scholarship_name,
                     "official_link": item.official_link,
-                }
-            )
+                    "match_status": result["match_status"],
+                    "match_score": result["match_score"],
+                    "passed_rules": result["passed_rules"],
+                    "failed_rules": result["failed_rules"],
+                    "unknown_rules": result["unknown_rules"],
+                    "warnings": result["warnings"],
+                })
 
         context = {
             "student_profile": self._profile_context(student),
             "scholarships": scholarship_context,
         }
+        if eligibility_question and student is not None:
+            context["eligibility_results"] = eligibility_results
 
         system_prompt = """
 You are ScholarMate AI, a helpful scholarship information assistant.
@@ -267,6 +379,19 @@ Rules:
 13. If the context lacks requested details, say those details are unavailable.
 14. Keep scholarship names, official scheme names, and source URLs exactly as
     provided; do not translate or alter proper names or links.
+15. When eligibility_results are supplied, explain those exact engine results.
+    Do not change their status, score, or rule outcomes, and do not infer
+    eligibility from profile fields yourself.
+16. The engine's likely_eligible status means likely eligible, not confirmed
+    or officially eligible. The engine does not confirm official eligibility.
+    needs_verification means one or more conditions remain unknown.
+    not_matched means the profile failed one or more evaluated rules; it is
+    not an official rejection. expired means the engine found a passed deadline.
+17. Treat unknown rules and missing student values as unknown, never as false.
+    For "why am I eligible?" or "why am I not eligible?", explain the supplied
+    passed, failed, and unknown rules for the relevant scholarship.
+18. If a personalized eligibility question has no student_profile, ask the
+    student to complete and save their profile before assessing eligibility.
 """
 
         language_instruction = (

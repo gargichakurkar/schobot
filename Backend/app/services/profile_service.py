@@ -9,6 +9,7 @@ from app.schemas.student_profile import StudentProfileCreate, StudentProfileUpda
 
 class ProfileService:
     def __init__(self, db: Session):
+        self.db = db
         self.repo = ProfileRepository(db)
 
     def create_profile(self, payload: StudentProfileCreate) -> StudentProfile:
@@ -23,4 +24,8 @@ class ProfileService:
         if profile is None:
             raise ValueError("Student profile not found")
         updates = payload.model_dump(exclude_none=True)
-        return self.repo.update(profile, updates)
+        updated_profile = self.repo.update(profile, updates)
+
+        from app.services.matching_service import MatchingService
+        MatchingService(self.db).recalculate_matches_for_student(updated_profile)
+        return updated_profile

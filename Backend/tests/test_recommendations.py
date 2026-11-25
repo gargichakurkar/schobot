@@ -86,3 +86,79 @@ def test_submit_and_recommend_creates_profile_and_matches(isolated_client):
             if recommendation["scholarship_id"] == scholarship_id
         )
         assert persisted["doc_status"] == "verified"
+
+
+def test_profile_update_automatically_refreshes_recommendations(isolated_client):
+    client = isolated_client
+    from app.core.database import get_db
+    from app.models.scholarship import Scholarship
+
+    db = next(app.dependency_overrides[get_db]())
+    scholarship = Scholarship(
+        scholarship_name="State SC Higher Education Grant",
+        provider="Govt of Maharashtra",
+        state="Maharashtra",
+        category="SC",
+        eligible_level="Undergraduate",
+        eligible_course="B.Tech",
+        max_income=300000,
+        is_active=True,
+    )
+    db.add(scholarship)
+    db.commit()
+    db.close()
+
+    payload = {
+        "full_name": "Rohan Deshmukh",
+        "email": "rohan@example.com",
+        "education_level": "Undergraduate",
+        "course": "B.Tech",
+        "study_year": "2",
+        "college_name": "COEP Pune",
+        "academic_score": 85,
+        "score_type": "percentage",
+        "domicile_state": "Maharashtra",
+        "study_state": "Maharashtra",
+        "category": "General",
+        "gender": "Male",
+        "annual_family_income": 150000,
+        "has_income_certificate": True,
+        "profile_completed": True,
+    }
+
+    submit = client.post("/api/profile/submit-and-recommend", json=payload)
+    assert submit.status_code == 200
+    student_id = submit.json()["student"]["id"]
+
+    recs_initial = client.get(f"/api/recommendations/{student_id}").json()["recommendations"]
+    assert len(recs_initial) == 1
+    # Initially category should be General and failed
+    cat_rule_initial = next(
+        r for r in recs_initial[0]["failed_rules"] if r["field"] == "category"
+    )
+    assert cat_rule_initial["student_value"] == "general"
+
+    # Update profile with SC category and 950000 income
+    update_res = client.put(
+        f"/api/profiles/{student_id}",
+        json={"category": "SC", "annual_family_income": 950000},
+    )
+    assert update_res.status_code == 200
+    assert update_res.json()["category"] == "SC"
+    assert update_res.json()["annual_family_income"] == 950000
+
+    # Verify recommendations are immediately updated without stale data
+    recs_updated = client.get(f"/api/recommendations/{student_id}").json()["recommendations"]
+    assert len(recs_updated) == 1
+
+    # Now category rule passed for SC!
+    cat_rule_updated = next(
+        r for r in recs_updated[0]["passed_rules"] if r["field"] == "category"
+    )
+    assert cat_rule_updated["student_value"] == "sc"
+
+    # And income rule reflects new income 950000
+    income_rule_updated = next(
+        r for r in recs_updated[0]["failed_rules"] if r["field"] == "income"
+    )
+    assert income_rule_updated["student_value"] == 950000.0

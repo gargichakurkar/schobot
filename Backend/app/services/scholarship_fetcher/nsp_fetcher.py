@@ -1,29 +1,31 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, time as day_time, timezone
-from hashlib import sha256
-from io import BytesIO
 import json
 import logging
 import re
-from difflib import SequenceMatcher
-import time
 import ssl
-import certifi
+import time
+from datetime import datetime, time as day_time, timezone
+from difflib import SequenceMatcher
+from email.utils import parsedate_to_datetime
+from hashlib import sha256
+from io import BytesIO
 from threading import Event
 from typing import Any
 from uuid import uuid4
+from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 from urllib.request import (
     HTTPRedirectHandler,
     HTTPSHandler,
     Request,
     build_opener,
 )
-from urllib.parse import unquote, urljoin, urlsplit
-from urllib.error import URLError, HTTPError
+from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
+import certifi
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -50,6 +52,8 @@ RETRY_COUNT = 4
 RETRY_MAX_DELAY_SECONDS = 30
 SCHEDULE_INTERVAL_SECONDS = 24 * 60 * 60
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+MAX_ROBOTS_BYTES = 512 * 1024
+ROBOTS_CACHE_SECONDS = 24 * 60 * 60
 MAX_GUIDELINE_TEXT_CHARS = 500_000
 MAX_AI_CONTEXT_CHARS = 18_000
 MAX_GUIDELINE_PAGES = 100
@@ -71,13 +75,15 @@ DATASET_COLUMNS = (
 )
 CONTENT_CLASSIFICATIONS = {"NEW", "UNCHANGED", "UPDATED", "REVIEW_REQUIRED", "FAILED"}
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+FETCHER_USER_AGENT = "ScholarMateScholarshipFetcher/1.0"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": FETCHER_USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,*/*",
     "Connection": "close",
 }
 
 logger = logging.getLogger(__name__)
+_ROBOTS_CACHE: dict[tuple[str, str], tuple[float, RobotFileParser]] = {}
 
 _GUIDELINE_URL_PLACEHOLDERS = {
     "",
@@ -109,9 +115,13 @@ _GUIDELINE_URL_PLACEHOLDERS = {
 
 
 class _AllowlistedRedirectHandler(HTTPRedirectHandler):
+    def __init__(self, source_key: str = "nsp"):
+        super().__init__()
+        self.source_key = source_key
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         target_url = urljoin(req.full_url, newurl)
-        if not _is_allowed_official_url(target_url):
+        if not _is_allowed_official_url(target_url, self.source_key):
             raise ValueError(
                 f"Refusing redirect outside approved HTTPS domains: {target_url}"
             )
@@ -125,9 +135,9 @@ class _AllowlistedRedirectHandler(HTTPRedirectHandler):
         )
 
 
-def urlopen(request, timeout=60, context=None):
+def urlopen(request, timeout=60, context=None, source_key: str = "nsp"):
     opener = build_opener(
-        _AllowlistedRedirectHandler(),
+        _AllowlistedRedirectHandler(source_key),
         HTTPSHandler(context=context or SSL_CONTEXT),
     )
     return opener.open(request, timeout=timeout)
@@ -166,22 +176,92 @@ def _is_placeholder_guideline_url(value: Any) -> bool:
     )
 
 
-def _is_allowed_official_url(url: str) -> bool:
-    return is_approved_https_url(url)
+def _is_allowed_official_url(url: str, source_key: str = "nsp") -> bool:
+    return is_approved_https_url(url, source_key=source_key)
+
+
+def _assert_robots_allowed(url: str, source_key: str) -> None:
+    parsed = urlsplit(url)
+    origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+    cache_key = (source_key, origin)
+    cached = _ROBOTS_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached is None or cached[0] <= now:
+        robots_url = urlunsplit((parsed.scheme, parsed.netloc, "/robots.txt", "", ""))
+        parser = RobotFileParser(robots_url)
+        try:
+            request = Request(robots_url, headers=HEADERS)
+            with urlopen(
+                request,
+                timeout=30,
+                context=SSL_CONTEXT,
+                source_key=source_key,
+            ) as response:
+                status = getattr(response, "status", 200)
+                if status < 200 or status >= 300:
+                    raise RuntimeError(
+                        f"Unable to verify robots policy for {origin}: HTTP {status}"
+                    )
+                content = response.read(MAX_ROBOTS_BYTES + 1)
+                if len(content) > MAX_ROBOTS_BYTES:
+                    raise RuntimeError(
+                        f"robots.txt from {origin} exceeds the size limit"
+                    )
+                parser.parse(content.decode("utf-8-sig", "replace").splitlines())
+        except HTTPError as exc:
+            if exc.code != 404:
+                raise RuntimeError(
+                    f"Unable to verify robots policy for {origin}: HTTP {exc.code}"
+                ) from exc
+            parser.parse([])
+        _ROBOTS_CACHE[cache_key] = (
+            now + ROBOTS_CACHE_SECONDS,
+            parser,
+        )
+    else:
+        parser = cached[1]
+
+    if not parser.can_fetch(FETCHER_USER_AGENT, url):
+        raise PermissionError(
+            f"Robots policy disallows fetching {url} for {FETCHER_USER_AGENT}."
+        )
+
+
+def _retry_after_seconds(error: HTTPError) -> float | None:
+    headers = error.headers
+    value = headers.get("Retry-After") if headers is not None else None
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        return max(
+            0.0,
+            (retry_at - datetime.now(timezone.utc)).total_seconds(),
+        )
 
 
 def _fetch_resource_details(
     url: str,
     retries: int = RETRY_COUNT,
     validators: dict[str, str | None] | None = None,
+    source_key: str = "nsp",
 ) -> tuple[bytes, str, str, str | None, str | None]:
-    if not _is_allowed_official_url(url):
+    if not _is_allowed_official_url(url, source_key):
         raise ValueError(f"Refusing to fetch non-official or non-HTTPS URL: {url}")
     if retries < 1:
         raise ValueError("retries must be at least one")
+    _assert_robots_allowed(url, source_key)
 
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
+        retry_after: float | None = None
         try:
             request_headers = dict(HEADERS)
             if validators:
@@ -190,12 +270,17 @@ def _fetch_resource_details(
                 if validators.get("last_modified"):
                     request_headers["If-Modified-Since"] = validators["last_modified"]
             request = Request(url, headers=request_headers)
-            with urlopen(request, timeout=60, context=SSL_CONTEXT) as response:
+            with urlopen(
+                request,
+                timeout=60,
+                context=SSL_CONTEXT,
+                source_key=source_key,
+            ) as response:
                 status = getattr(response, "status", 200)
                 if status < 200 or status >= 300:
                     raise URLError(f"Official site returned HTTP {status}")
                 final_url = response.geturl()
-                if not _is_allowed_official_url(final_url):
+                if not _is_allowed_official_url(final_url, source_key):
                     raise ValueError(f"Refusing redirected URL outside official domains: {final_url}")
                 content_type = response.headers.get("Content-Type", "")
                 content = response.read(MAX_RESPONSE_BYTES + 1)
@@ -224,6 +309,16 @@ def _fetch_resource_details(
                 logger.error("Non-retryable HTTP %s fetching %s", exc.code, url)
                 raise
             last_error = exc
+            if exc.code == 429:
+                retry_after = _retry_after_seconds(exc)
+                if (
+                    retry_after is not None
+                    and retry_after > RETRY_MAX_DELAY_SECONDS
+                ):
+                    raise RuntimeError(
+                        "The source requested a retry delay longer than the "
+                        "configured limit; deferring this fetch to the next run."
+                    ) from exc
         except (URLError, TimeoutError, OSError) as exc:
             last_error = exc
 
@@ -235,7 +330,12 @@ def _fetch_resource_details(
             last_error,
         )
         if attempt < retries:
-            time.sleep(min(2 ** (attempt - 1), RETRY_MAX_DELAY_SECONDS))
+            delay = (
+                retry_after
+                if retry_after is not None
+                else min(2 ** (attempt - 1), RETRY_MAX_DELAY_SECONDS)
+            )
+            time.sleep(delay)
 
     if last_error is None:
         raise RuntimeError(f"Unable to fetch {url}")
@@ -245,10 +345,12 @@ def _fetch_resource_details(
 def fetch_resource(
     url: str,
     retries: int = RETRY_COUNT,
+    source_key: str = "nsp",
 ) -> tuple[bytes, str, str]:
     content, content_type, final_url, _, _ = _fetch_resource_details(
         url,
         retries=retries,
+        source_key=source_key,
     )
     return content, content_type, final_url
 
@@ -334,6 +436,12 @@ def extract_schemes(html: str) -> list[dict]:
                 text,
                 re.IGNORECASE,
             )
+            application_start_match = re.search(
+                r"Student Application\s+Open from\s*:\s*"
+                r"(?P<date>\d{1,2}[-/]\d{1,2}[-/]\d{4})",
+                text,
+                re.IGNORECASE,
+            )
 
             schemes.append({
                 "scholarship_name": name,
@@ -343,6 +451,16 @@ def extract_schemes(html: str) -> list[dict]:
                 "faq_link": links.get("faq_url"),
                 "application_deadline": (
                     deadline_match.group("date") if deadline_match else None
+                ),
+                "application_start_date": (
+                    application_start_match.group("date")
+                    if application_start_match
+                    else None
+                ),
+                "application_start_evidence": (
+                    application_start_match.group(0)
+                    if application_start_match
+                    else None
                 ),
                 "application_status": (
                     _status_from_deadline_label(
@@ -370,6 +488,22 @@ def _source_identifier(scheme: dict[str, Any]) -> str:
     return f"nsp:{sha256(identity.encode('utf-8')).hexdigest()[:24]}"
 
 
+def _normalized_official_url(value: Any) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed = urlsplit(str(value).strip())
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.casefold() != "https" or not host:
+        return None
+    netloc = host if port in {None, 443} else f"{host}:{port}"
+    path = parsed.path.rstrip("/") or "/"
+    return urlunsplit(("https", netloc, path, parsed.query, parsed.fragment))
+
+
 def _tokens(value: str | None) -> set[str]:
     return {token.strip() for token in (value or "").split(";") if token.strip()}
 
@@ -382,6 +516,7 @@ def _load_existing_records(db: Session) -> list[dict[str, Any]]:
             "provider": record.provider,
             "source_filename": record.source_filename,
             "source_identifier": record.source_identifier,
+            "official_link": record.official_link,
             "normalized": normalize_name(record.scholarship_name or ""),
             "provider_normalized": normalize_name(record.provider or ""),
         }
@@ -445,6 +580,31 @@ def _classify_schemes(
                     "matched_name": source_match["name"],
                     "matched_id": source_match["id"],
                     "action": "update",
+                }
+            )
+            continue
+
+        official_link = _normalized_official_url(scheme.get("official_link"))
+        generic_listing_link = _normalized_official_url(NSP_URL)
+        url_matches = [
+            record
+            for record in existing
+            if official_link
+            and official_link != generic_listing_link
+            and _normalized_official_url(record.get("official_link")) == official_link
+        ]
+        if url_matches:
+            review_schemes.append(
+                {
+                    "scheme": scheme,
+                    "possible_matches": [
+                        {
+                            "matched_name": record["name"],
+                            "similarity": 1.0,
+                            "match_reason": "official_url",
+                        }
+                        for record in url_matches[:3]
+                    ],
                 }
             )
             continue
@@ -578,6 +738,12 @@ GUIDELINE_LABELS = {
     ),
     "scholarship_type": ("scholarship type", "scheme type", "type of scholarship"),
     "state": ("state", "domicile", "residents of", "resident of"),
+    "application_start": ("student application open from",),
+    "application_deadline": (
+        "student application open till",
+        "student application closed on",
+        "last date for submission",
+    ),
 }
 
 
@@ -686,6 +852,10 @@ def _extract_guideline_document(
         fields["application_deadline"] = deadline_date
         fields["application_status"] = deadline_status
         fields["deadline_evidence"] = deadline_evidence or ""
+    start_date, start_evidence = _extract_document_application_start(text)
+    if start_date:
+        fields["application_start_date"] = start_date
+        fields["application_start_evidence"] = start_evidence or ""
     fields["eligibility_details"] = text
     return fields, text, was_truncated
 
@@ -695,12 +865,17 @@ def extract_guideline_fields(content: bytes, content_type: str) -> dict[str, str
     return fields
 
 
-def fetch_guidelines(url: str | None, retries: int = RETRY_COUNT) -> dict[str, str]:
+def fetch_guidelines(
+    url: str | None,
+    retries: int = RETRY_COUNT,
+    source_key: str = "nsp",
+) -> dict[str, str]:
     if _is_placeholder_guideline_url(url):
         return {}
     content, content_type, final_url, _, _ = _fetch_resource_details(
         url,
         retries=retries,
+        source_key=source_key,
     )
     logger.info("Extracting official guideline content from %s", final_url)
     return extract_guideline_fields(content, content_type)
@@ -722,6 +897,20 @@ def _extract_document_deadline(text: str) -> tuple[str | None, str, str | None]:
         return None, "unknown", None
     status = _status_from_deadline_label(match.group("status"), match.group("date"))
     return match.group("date"), status, match.group(0)
+
+
+def _extract_document_application_start(
+    text: str,
+) -> tuple[str | None, str | None]:
+    match = re.search(
+        r"\bStudent\s+Application\s+Open\s+from\s*[:\-]?\s*"
+        r"(?P<date>\d{1,2}[-/]\d{1,2}[-/]\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None, None
+    return match.group("date"), match.group(0)
 
 
 def _dataset_fields_from_sources(
@@ -778,6 +967,7 @@ def _dataset_fields_from_sources(
 
 def _validate_dataset_fields(
     fields: dict[str, Any],
+    source_key: str = "nsp",
 ) -> tuple[bool, str | None]:
     if tuple(fields) != DATASET_COLUMNS:
         return False, "Dataset field names or ordering do not match the 13-column contract."
@@ -800,7 +990,7 @@ def _validate_dataset_fields(
             return False, f"{column} exceeds the existing Scholarship model limit."
     for column in ("official_portal_link", "scheme_info_link"):
         value = fields.get(column)
-        if value and not is_approved_https_url(value):
+        if value and not is_approved_https_url(value, source_key=source_key):
             return False, f"{column} is outside the approved HTTPS source domains."
     return True, None
 
@@ -1063,6 +1253,7 @@ def _listing_hash(scheme: dict[str, Any]) -> str:
             "official_link": scheme.get("official_link"),
             "scheme_info_link": scheme.get("scheme_info_link"),
             "application_status": scheme.get("application_status"),
+            "application_start_date": scheme.get("application_start_date"),
             "application_deadline": scheme.get("application_deadline"),
         }
     )
@@ -1078,6 +1269,7 @@ def _content_hash(
             "listing_hash": listing_hash,
             "document_hash": document_hash,
             "application_status": scheme.get("application_status", "unknown"),
+            "application_start_date": scheme.get("application_start_date"),
             "application_deadline": scheme.get("application_deadline"),
             "guideline_url": scheme.get("scheme_info_link"),
         }
@@ -1119,6 +1311,7 @@ def _process_incremental_scheme(
     has_source_record: bool,
     base_classification: str,
     ai_client: Any,
+    source_key: str = "nsp",
 ) -> dict[str, Any]:
     source_id = _source_identifier(scheme)
     listing_hash = _listing_hash(scheme)
@@ -1199,7 +1392,7 @@ def _process_incremental_scheme(
                 "deadline_evidence": previous_state.deadline_evidence,
             }
     else:
-        if not is_approved_https_url(guideline_url):
+        if not is_approved_https_url(guideline_url, source_key=source_key):
             raise ValueError("Guideline URL is outside the approved HTTPS domains.")
         validators = (
             {
@@ -1212,9 +1405,13 @@ def _process_incremental_scheme(
         if GUIDELINE_REQUEST_INTERVAL_SECONDS:
             time.sleep(GUIDELINE_REQUEST_INTERVAL_SECONDS)
         content, content_type, final_url, etag, last_modified = (
-            _fetch_resource_details(guideline_url, validators=validators)
+            _fetch_resource_details(
+                guideline_url,
+                validators=validators,
+                source_key=source_key,
+            )
         )
-        if not is_approved_https_url(final_url):
+        if not is_approved_https_url(final_url, source_key=source_key):
             raise ValueError("Guideline redirect is outside the approved HTTPS domains.")
         resolved_guideline_url = final_url
         if not content and previous_same_guideline:
@@ -1247,7 +1444,10 @@ def _process_incremental_scheme(
     if scheme.get("application_status", "unknown") == "unknown":
         if guideline_fields.get("application_status"):
             scheme["application_status"] = guideline_fields["application_status"]
-        elif document_unchanged and previous_state:
+        elif (
+            previous_state is not None
+            and previous_state.application_status in {"open", "closed"}
+        ):
             scheme["application_status"] = previous_state.application_status
     deadline_evidence = (
         scheme.get("deadline_evidence")
@@ -1258,6 +1458,34 @@ def _process_incremental_scheme(
             else None
         )
     )
+    previous_evidence = (
+        previous_state.deadline_evidence
+        if previous_state is not None
+        else ""
+    )
+    previous_start_date, previous_start_evidence = (
+        _extract_document_application_start(previous_evidence or "")
+    )
+    application_start_date = (
+        scheme.get("application_start_date")
+        or guideline_fields.get("application_start_date")
+        or previous_start_date
+    )
+    application_start_evidence = (
+        scheme.get("application_start_evidence")
+        or guideline_fields.get("application_start_evidence")
+        or previous_start_evidence
+    )
+    period_evidence = list(
+        dict.fromkeys(
+            evidence_line
+            for evidence in (application_start_evidence, deadline_evidence)
+            if evidence
+            for evidence_line in evidence.splitlines()
+            if evidence_line.strip()
+        )
+    )
+    deadline_evidence = "\n".join(period_evidence) or None
 
     source_text = "\n\n".join(
         part
@@ -1317,7 +1545,10 @@ def _process_incremental_scheme(
             )
             extraction_status = "ai_assisted" if ai_client else "deterministic"
 
-    valid, validation_error = _validate_dataset_fields(dataset_fields)
+    valid, validation_error = _validate_dataset_fields(
+        dataset_fields,
+        source_key=source_key,
+    )
     if not valid:
         classification = "REVIEW_REQUIRED"
         extraction_status = "review_required"
@@ -1367,6 +1598,8 @@ def _process_incremental_scheme(
         "extraction_status": extraction_status,
         "error": error,
         "application_status": scheme.get("application_status", "unknown"),
+        "application_start_date": application_start_date,
+        "application_start_evidence": application_start_evidence,
         "application_deadline": scheme.get("application_deadline"),
         "deadline_evidence": deadline_evidence,
     }
@@ -1560,6 +1793,7 @@ def run_pipeline(
                     has_source_record,
                     base_classification,
                     ai_client,
+                    source_key=source_key,
                 )
             except Exception as exc:
                 logger.warning(
@@ -1627,6 +1861,59 @@ def run_pipeline(
         "skipped": skipped,
         "invalid": classification_counts["INVALID"],
     }
+    hash_history: dict[str, dict[str, dict[str, str | None]]] = {}
+    application_periods: dict[str, dict[str, str | None]] = {}
+    for result in processed:
+        previous_state = previous_states.get(result["source_identifier"])
+        hash_history[result["source_identifier"]] = {
+            "previous": {
+                "listing": previous_state.listing_hash if previous_state else None,
+                "document": previous_state.document_hash if previous_state else None,
+                "content": previous_state.content_hash if previous_state else None,
+            },
+            "current": {
+                "listing": result.get("listing_hash"),
+                "document": result.get("document_hash"),
+                "content": result.get("content_hash"),
+            },
+        }
+        previous_evidence = (
+            previous_state.deadline_evidence
+            if previous_state is not None
+            else ""
+        )
+        previous_start_date, _ = _extract_document_application_start(
+            previous_evidence or ""
+        )
+        application_periods[result["source_identifier"]] = {
+            "start": (
+                result.get("application_start_date")
+                or result["scheme"].get("application_start_date")
+                or previous_start_date
+            ),
+            "end": (
+                result.get("application_deadline")
+                or result["scheme"].get("application_deadline")
+                or (
+                    previous_state.application_deadline
+                    if previous_state is not None
+                    else None
+                )
+            ),
+            "status": result.get(
+                "application_status",
+                result["scheme"].get("application_status", "unknown"),
+            ),
+            "evidence": (
+                result.get("deadline_evidence")
+                or result["scheme"].get("deadline_evidence")
+                or (
+                    previous_state.deadline_evidence
+                    if previous_state is not None
+                    else None
+                )
+            ),
+        }
     timestamp = datetime.now(timezone.utc)
     final_record_count = 0
     try:
@@ -1806,7 +2093,10 @@ def run_pipeline(
                 run.statistics = {
                     **classification_counts,
                     **persist_stats,
+                    "discovered": len(schemes),
                     "final_record_count": final_record_count,
+                    "hashes": hash_history,
+                    "application_periods": application_periods,
                 }
     except Exception as exc:
         logger.exception(
@@ -1830,6 +2120,7 @@ def run_pipeline(
         "source": source_key,
         "run_id": run_id,
         "extracted": len(schemes),
+        "discovered": len(schemes),
         "existing_records": len(existing),
         "exact_matches": len(exact_matches),
         "possible_duplicates": len(review_results),
@@ -1843,6 +2134,9 @@ def run_pipeline(
                 "source_url": source.listing_url,
                 "guideline_url": result["scheme"].get("scheme_info_link"),
                 "document_hash": result.get("document_hash"),
+                "application_period": application_periods[
+                    result["source_identifier"]
+                ],
                 "error": result.get("error"),
             }
             for result in processed
@@ -1865,8 +2159,11 @@ def run_pipeline(
         "statistics": {
             **classification_counts,
             **persist_stats,
+            "discovered": len(schemes),
             "failed": len(failed_results),
             "final_record_count": final_record_count,
+            "hashes": hash_history,
+            "application_periods": application_periods,
         },
     }
     logger.info(

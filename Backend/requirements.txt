@@ -17,4 +17,5 @@ psycopg[binary]
 beautifulsoup4
 certifi
 pypdf
+pypdfium2
 pydantic-settings
