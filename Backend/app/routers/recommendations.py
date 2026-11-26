@@ -77,10 +77,17 @@ def submit_and_recommend(payload: StudentProfileCreate, db: Session = Depends(ge
         )
 
     recommendations = dedupe_by_scholarship_id(sort_matches(recommendations))
+    student_resp = StudentProfileResponse.model_validate(student)
+    try:
+        from auth import create_access_token
+        student_resp.access_token = create_access_token({"sub": student.id, "role": "student"})
+    except Exception:
+        pass
     return {
-        "student": StudentProfileResponse.model_validate(student),
+        "student": student_resp,
         "recommendations": recommendations[:10],
         "best_bets": compute_best_bets(student, db),
+        "access_token": getattr(student_resp, "access_token", None),
     }
 
 

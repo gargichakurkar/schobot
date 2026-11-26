@@ -1,4 +1,13 @@
-import { normalizeCategory, normalizeEducationLevel } from "./data/profile";
+import {
+  clearAuthToken,
+  getAuthToken,
+  normalizeCategory,
+  normalizeEducationLevel,
+  profileFromBackend,
+  saveAuthToken,
+  saveStudentId,
+  saveStudentProfile,
+} from "./data/profile";
 
 export const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
@@ -6,7 +15,7 @@ async function request(path, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
-  const token = typeof window !== "undefined" ? window.localStorage.getItem("schobot_auth_token") : null;
+  const token = getAuthToken();
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   let response;
   try {
@@ -22,7 +31,8 @@ async function request(path, options = {}, timeoutMs = 30000) {
   } catch (error) {
     window.clearTimeout(timeoutId);
     if (controller.signal.aborted) {
-      throw new Error(`Backend request to ${path} timed out after 30 seconds at ${apiBaseUrl}.`, { cause: error });
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      throw new Error(`Backend request to ${path} timed out after ${timeoutSec} seconds at ${apiBaseUrl}.`, { cause: error });
     }
     throw new Error(
       `Could not reach the backend at ${apiBaseUrl}. Check that it is running and allows this frontend origin (CORS).`,
@@ -57,6 +67,16 @@ async function request(path, options = {}, timeoutMs = 30000) {
       }
     }
     window.clearTimeout(timeoutId);
+
+    if (response.status === 401) {
+      clearAuthToken();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("schobot-session-expired", { detail: { path } }));
+        window.dispatchEvent(new Event("schobot-auth-changed"));
+      }
+      throw new Error(detail || "Your session has expired or authentication is required. Please log in to continue.");
+    }
+
     throw new Error(`${detail || response.statusText || "The server returned an error"} for ${apiBaseUrl}${path} (HTTP ${response.status}).`);
   }
 
@@ -72,7 +92,8 @@ async function request(path, options = {}, timeoutMs = 30000) {
   } catch (error) {
     window.clearTimeout(timeoutId);
     if (controller.signal.aborted) {
-      throw new Error(`Backend request to ${path} timed out after 30 seconds at ${apiBaseUrl}.`, { cause: error });
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      throw new Error(`Backend request to ${path} timed out after ${timeoutSec} seconds at ${apiBaseUrl}.`, { cause: error });
     }
     throw new Error(`Server returned an invalid response for ${apiBaseUrl}${path} (HTTP ${response.status}; response was not valid JSON).`, { cause: error });
   }
@@ -117,22 +138,99 @@ function profilePayload(profile) {
     receives_other_scholarship: booleanValue(profile.receives_other_scholarship),
     annual_family_income: numericValue(profile.annual_family_income),
     has_income_certificate: booleanValue(profile.has_income_certificate),
+    password: profile.password || null,
     profile_completed: true,
   };
 }
 
-export function getAuthToken() {
-  return typeof window !== "undefined" ? window.localStorage.getItem("schobot_auth_token") : null;
+export async function loginStudent(credentials, maybePassword) {
+  let identifier = "";
+  let password = "";
+  if (typeof credentials === "object" && credentials !== null) {
+    identifier = (credentials.identifier || credentials.email || credentials.student_id || "").trim();
+    password = (credentials.password || "").trim();
+  } else {
+    identifier = String(credentials || "").trim();
+    password = String(maybePassword || "").trim();
+  }
+
+  if (!identifier) {
+    throw new Error("Please enter your registered email address or Student ID.");
+  }
+  if (!password) {
+    throw new Error("Please enter your account password.");
+  }
+
+  const data = await request("/api/auth/token", {
+    method: "POST",
+    body: JSON.stringify({ identifier, password }),
+  });
+  if (data?.access_token) {
+    saveAuthToken(data.access_token);
+  }
+  if (data?.student_id) {
+    saveStudentId(data.student_id);
+  }
+  if (data?.student) {
+    const profile = profileFromBackend(data.student);
+    saveStudentProfile(profile);
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("schobot-auth-changed"));
+    window.dispatchEvent(new Event("schobot-profile-updated"));
+  }
+  return data;
 }
 
-export function setAuthToken(token) {
-  if (typeof window !== "undefined") {
-    if (token) {
-      window.localStorage.setItem("schobot_auth_token", token);
-    } else {
-      window.localStorage.removeItem("schobot_auth_token");
-    }
+export async function requestOTP(identifier) {
+  const cleanId = (identifier || "").trim();
+  if (!cleanId) {
+    throw new Error("Please enter your registered email address or Student ID.");
   }
+  return await request("/api/auth/request-otp", {
+    method: "POST",
+    body: JSON.stringify({ identifier: cleanId }),
+  });
+}
+
+export async function verifyOTPAndSetPassword({ identifier, otp, newPassword }) {
+  const cleanId = (identifier || "").trim();
+  const cleanOtp = (otp || "").trim();
+  const cleanPassword = (newPassword || "").trim();
+
+  if (!cleanId) throw new Error("Identifier is required.");
+  if (!cleanOtp) throw new Error("Verification code is required.");
+  if (!cleanPassword || cleanPassword.length < 10) {
+    throw new Error("New password must be at least 10 characters.");
+  }
+
+  const data = await request("/api/auth/verify-otp-set-password", {
+    method: "POST",
+    body: JSON.stringify({
+      identifier: cleanId,
+      otp: cleanOtp,
+      new_password: cleanPassword,
+    }),
+  });
+  if (data?.access_token) {
+    saveAuthToken(data.access_token);
+  }
+  if (data?.student_id) {
+    saveStudentId(data.student_id);
+  }
+  if (data?.student) {
+    const profile = profileFromBackend(data.student);
+    saveStudentProfile(profile);
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("schobot-auth-changed"));
+    window.dispatchEvent(new Event("schobot-profile-updated"));
+  }
+  return data;
+}
+
+export async function getAuthStatus() {
+  return await request("/api/auth/status");
 }
 
 export async function fetchAuthToken(studentId) {
@@ -142,7 +240,7 @@ export async function fetchAuthToken(studentId) {
     body: JSON.stringify({ student_id: studentId }),
   });
   if (data?.access_token) {
-    setAuthToken(data.access_token);
+    saveAuthToken(data.access_token);
     return data.access_token;
   }
   return null;
@@ -154,7 +252,14 @@ export async function createProfile(profile) {
     body: JSON.stringify(profilePayload(profile)),
   });
   if (data?.access_token) {
-    setAuthToken(data.access_token);
+    saveAuthToken(data.access_token);
+  }
+  if (data?.id) {
+    saveStudentId(data.id);
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("schobot-auth-changed"));
+    window.dispatchEvent(new Event("schobot-profile-updated"));
   }
   return data;
 }
@@ -164,8 +269,17 @@ export async function submitProfileAndGetRecommendations(profile) {
     method: "POST",
     body: JSON.stringify(profilePayload(profile)),
   });
-  if (data?.access_token) {
-    setAuthToken(data.access_token);
+  const token = data?.access_token || data?.student?.access_token;
+  if (token) {
+    saveAuthToken(token);
+  }
+  const studentId = data?.student?.id;
+  if (studentId) {
+    saveStudentId(studentId);
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("schobot-auth-changed"));
+    window.dispatchEvent(new Event("schobot-profile-updated"));
   }
   return data;
 }

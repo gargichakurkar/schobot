@@ -27,6 +27,7 @@ def create_test_student_with_token(client, name="Test Student") -> tuple[str, st
         json={
             "full_name": name,
             "email": f"{uuid4().hex[:8]}@example.com",
+            "password": "SecurePassword123!",
             "education_level": "Undergraduate",
             "course": "Computer Engineering",
             "study_year": "2",

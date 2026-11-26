@@ -106,6 +106,19 @@ export default function ProfileForm({
         <TextField autoComplete="email" label="Email" name="email" onChange={onChange} profile={profile} required type="email" />
         <TextField autoComplete="tel" label="Phone Number" name="phone_number" onChange={onChange} profile={profile} required type="tel" />
         <TextField label="Date of Birth" name="date_of_birth" onChange={onChange} profile={profile} required type="date" />
+        {!profile.id && (
+          <TextField
+            autoComplete="new-password"
+            label="Account Password"
+            name="password"
+            onChange={onChange}
+            profile={profile}
+            type="password"
+            minLength={10}
+            placeholder="Create password for vault login (min 10 characters)"
+            required
+          />
+        )}
       </ProfileSection>
 
       <ProfileSection title="Education Details">

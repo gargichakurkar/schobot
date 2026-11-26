@@ -66,6 +66,40 @@ export const categoriesProfile = [
 
 const storageKey = "schobot-student-profile";
 const studentIdKey = "schobot_student_id";
+const tokenKey = "schobot_access_token";
+
+export function getAuthToken() {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(tokenKey) || null;
+}
+
+export function saveAuthToken(token) {
+  if (typeof window === "undefined") return;
+  if (token) {
+    window.sessionStorage.setItem(tokenKey, token);
+  } else {
+    window.sessionStorage.removeItem(tokenKey);
+  }
+}
+
+export function clearAuthToken() {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(tokenKey);
+}
+
+export function isAuthenticated() {
+  return Boolean(getAuthToken() && getStudentId());
+}
+
+export function logoutStudent() {
+  clearAuthToken();
+  clearStudentId();
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(storageKey);
+    window.dispatchEvent(new Event("schobot-auth-changed"));
+    window.dispatchEvent(new Event("schobot-profile-updated"));
+  }
+}
 
 function hasText(value) {
   return typeof value === "string" && value.trim().length > 0;

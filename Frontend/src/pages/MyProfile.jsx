@@ -7,21 +7,49 @@ import {
   updateProfile,
 } from "../apiClient";
 import {
-  getStudentId,
   clearStudentId,
+  getStudentId,
+  isAuthenticated,
   loadStudentProfile,
+  logoutStudent,
   profileFromBackend,
   saveStudentId,
   saveStudentProfile,
 } from "../data/profile";
 
-export default function MyProfile() {
+export default function MyProfile({ onOpenLogin }) {
   const [profile, setProfile] = useState(loadStudentProfile);
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveErrorDetail, setSaveErrorDetail] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [authed, setAuthed] = useState(isAuthenticated);
   const profileEdited = useRef(false);
+
+  useEffect(() => {
+    const handleAuthChange = () => {
+      setAuthed(isAuthenticated());
+      const studentId = getStudentId();
+      if (studentId) {
+        getProfile(studentId)
+          .then((serverProfile) => {
+            const updatedProfile = profileFromBackend(serverProfile, loadStudentProfile());
+            setProfile(updatedProfile);
+            saveStudentProfile(updatedProfile);
+          })
+          .catch(() => {
+            setProfile(loadStudentProfile());
+          });
+      } else {
+        setProfile(loadStudentProfile());
+      }
+    };
+
+    window.addEventListener("schobot-auth-changed", handleAuthChange);
+    return () => {
+      window.removeEventListener("schobot-auth-changed", handleAuthChange);
+    };
+  }, []);
 
   useEffect(() => {
     const studentId = getStudentId();
@@ -133,6 +161,8 @@ export default function MyProfile() {
     setIsSaving(false);
   };
 
+  const activeStudentId = getStudentId();
+
   return (
     <main className="content-page">
       <div className="page-heading">
@@ -140,6 +170,37 @@ export default function MyProfile() {
         <h1>Student Profile</h1>
         <p className="page-subtitle">Tell us about yourself so we can find the best scholarships for you.</p>
       </div>
+
+      <div className={`profile-auth-status ${authed ? "profile-auth-logged-in" : "profile-auth-logged-out"}`}>
+        {authed ? (
+          <div className="profile-auth-content">
+            <span className="profile-auth-badge">Active Session</span>
+            <span>
+              Signed in as <strong>{profile.full_name || "Student"}</strong>
+              {profile.email ? ` (${profile.email})` : activeStudentId ? ` (ID: ${activeStudentId.slice(0, 8)}…)` : ""}
+            </span>
+            <button
+              type="button"
+              className="profile-auth-action-btn"
+              onClick={() => logoutStudent()}
+            >
+              Sign Out
+            </button>
+          </div>
+        ) : (
+          <div className="profile-auth-content">
+            <span>Already have a Schobot profile or Document Vault?</span>
+            <button
+              type="button"
+              className="profile-auth-action-btn"
+              onClick={() => onOpenLogin?.()}
+            >
+              Sign In to Your Account
+            </button>
+          </div>
+        )}
+      </div>
+
       <ProfileForm
         onChange={handleChange}
         onSubmit={handleSubmit}

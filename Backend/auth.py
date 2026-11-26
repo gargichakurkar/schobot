@@ -15,10 +15,16 @@ MINIMUM_SIGNING_KEY_LENGTH = 32
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto"
-)
+def _init_pwd_context() -> CryptContext:
+    try:
+        ctx = CryptContext(schemes=["bcrypt", "pbkdf2_sha256"], deprecated="auto")
+        ctx.hash("test-probe")
+        return ctx
+    except Exception:
+        return CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
+
+
+pwd_context = _init_pwd_context()
 
 
 def _jwt_signing_key() -> str:
@@ -101,11 +107,17 @@ def get_current_student(
 
     payload = decode_access_token(token)
     student_id = payload.get("sub")
+    role = payload.get("role")
     if not student_id:
         raise HTTPException(
             status_code=401,
             detail="Invalid token: missing student identifier.",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    if role != "student":
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Access token does not have the student role.",
         )
 
     student = db.query(StudentProfile).filter(StudentProfile.id == student_id).first()
@@ -127,10 +139,25 @@ def require_counselor_or_admin(
 ) -> dict:
     # 1. Check counselor link token header
     if x_counselor_token:
+        from datetime import datetime, timezone
         from app.models.counselor_link import CounselorLink
 
         link = db.query(CounselorLink).filter(CounselorLink.token == x_counselor_token).first()
         if link:
+            if getattr(link, "is_revoked", False):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Counselor link has been revoked by the student.",
+                )
+            exp = getattr(link, "expires_at", None)
+            if exp:
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if exp < datetime.now(timezone.utc):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Counselor access link has expired.",
+                    )
             return {"role": "counselor", "identifier": link.counselor_email}
 
     # 2. Check JWT Bearer token

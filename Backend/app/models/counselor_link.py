@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -19,4 +19,10 @@ class CounselorLink(Base):
     counselor_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     language: Mapped[str] = mapped_column(String(2), nullable=False, default="en")
     token: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

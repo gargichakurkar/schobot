@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { getStudentName } from "../data/profile";
+import { getStudentName, isAuthenticated, logoutStudent } from "../data/profile";
 import Icon from "./Icon";
 
 const navigation = [
@@ -11,16 +11,22 @@ const navigation = [
   { label: "Certificate Scanner", to: "/documents", icon: "search" },
 ];
 
-export default function Sidebar({ menuOpen, onNavigate }) {
+export default function Sidebar({ menuOpen, onNavigate, onOpenLogin }) {
   const [studentName, setStudentName] = useState(getStudentName);
+  const [authed, setAuthed] = useState(isAuthenticated);
 
   useEffect(() => {
-    const updateName = () => setStudentName(getStudentName());
-    window.addEventListener("schobot-profile-updated", updateName);
-    window.addEventListener("storage", updateName);
+    const updateState = () => {
+      setStudentName(getStudentName());
+      setAuthed(isAuthenticated());
+    };
+    window.addEventListener("schobot-profile-updated", updateState);
+    window.addEventListener("schobot-auth-changed", updateState);
+    window.addEventListener("storage", updateState);
     return () => {
-      window.removeEventListener("schobot-profile-updated", updateName);
-      window.removeEventListener("storage", updateName);
+      window.removeEventListener("schobot-profile-updated", updateState);
+      window.removeEventListener("schobot-auth-changed", updateState);
+      window.removeEventListener("storage", updateState);
     };
   }, []);
 
@@ -47,14 +53,40 @@ export default function Sidebar({ menuOpen, onNavigate }) {
         ))}
       </nav>
 
-      <div className="sidebar-student" aria-label="Signed-in student">
-        <span className="student-avatar">{studentName ? studentName.slice(0, 1).toUpperCase() : "?"}</span>
-        <span className="student-copy">
-          <strong>{studentName || "Student"}</strong>
-          <small>Student</small>
-        </span>
-        <span className="student-chevron"><Icon name="chevron" size={15} /></span>
-      </div>
+      {authed ? (
+        <div className="sidebar-student" aria-label="Signed-in student">
+          <span className="student-avatar">{studentName ? studentName.slice(0, 1).toUpperCase() : "S"}</span>
+          <span className="student-copy">
+            <strong>{studentName || "Student"}</strong>
+            <small>Signed in</small>
+          </span>
+          <button
+            className="sidebar-logout-btn"
+            type="button"
+            title="Sign out"
+            aria-label="Sign out"
+            onClick={() => {
+              logoutStudent();
+            }}
+          >
+            <Icon name="logout" size={17} />
+          </button>
+        </div>
+      ) : (
+        <div className="sidebar-auth-cta">
+          <button
+            className="sidebar-login-btn"
+            type="button"
+            onClick={() => {
+              onNavigate?.();
+              onOpenLogin?.();
+            }}
+          >
+            <Icon name="login" size={18} />
+            <span>Student Login</span>
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -33,21 +33,44 @@ def create_counselor_link(
         )
     student_id = current_student.id
     link = db.query(CounselorLink).filter(CounselorLink.student_id == student_id).first()
+    expiry = datetime.now(timezone.utc) + timedelta(days=30)
     if link is None:
         link = CounselorLink(
             student_id=student_id,
             counselor_email=str(payload.counselor_email),
             language=payload.language,
             token=secrets.token_urlsafe(32),
+            expires_at=expiry,
+            is_revoked=False,
         )
         db.add(link)
     else:
         link.counselor_email = str(payload.counselor_email)
         link.language = payload.language
         link.token = secrets.token_urlsafe(32)
+        link.expires_at = expiry
+        link.is_revoked = False
     db.commit()
     db.refresh(link)
-    return {"language": link.language, "token": link.token, "delivery_status": "not_configured"}
+    return {
+        "language": link.language,
+        "token": link.token,
+        "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+        "delivery_status": "not_configured",
+    }
+
+
+@router.delete("/link")
+def revoke_counselor_link(
+    current_student: StudentProfile = Depends(get_current_student),
+    db: Session = Depends(get_db),
+) -> dict:
+    link = db.query(CounselorLink).filter(CounselorLink.student_id == current_student.id).first()
+    if link is None:
+        raise HTTPException(status_code=404, detail="No active counselor link found.")
+    link.is_revoked = True
+    db.commit()
+    return {"status": "success", "message": "Counselor link revoked successfully."}
 
 
 @router.get("/view/{token}")
@@ -55,6 +78,14 @@ def get_counselor_view(token: str, db: Session = Depends(get_db)) -> dict:
     link = db.query(CounselorLink).filter(CounselorLink.token == token).first()
     if link is None:
         raise HTTPException(status_code=404, detail="Counselor link not found")
+    if getattr(link, "is_revoked", False):
+        raise HTTPException(status_code=403, detail="Counselor access link has been revoked by the student.")
+    exp = getattr(link, "expires_at", None)
+    if exp:
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
+            raise HTTPException(status_code=403, detail="Counselor access link has expired.")
     student = db.query(StudentProfile).filter(StudentProfile.id == link.student_id).first()
     if student is None:
         raise HTTPException(status_code=404, detail="Student profile not found")

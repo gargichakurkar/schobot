@@ -14,6 +14,7 @@ def create_test_student_with_token(client, name="Test Student") -> tuple[str, st
         json={
             "full_name": name,
             "email": f"{uuid4().hex[:8]}@example.com",
+            "password": "SecurePassword123!",
             "education_level": "Undergraduate",
             "course": "Computer Engineering",
             "study_year": "2",
@@ -171,3 +172,57 @@ def test_authenticated_student_matching_student_id_allowed(isolated_client):
     )
     assert res.status_code == 200
     assert res.json()["token"]
+
+
+def test_counselor_link_revocation(isolated_client):
+    """Authenticated student can revoke counselor link, blocking further access."""
+    student_id, _, headers = create_test_student_with_token(isolated_client, "Student Revoker")
+
+    # 1. Create link
+    create_res = isolated_client.post(
+        "/api/counselor/link",
+        json={"counselor_email": "counselor@school.edu", "language": "en"},
+        headers=headers,
+    )
+    assert create_res.status_code == 200
+    token = create_res.json()["token"]
+
+    # 2. View link works initially
+    view_res = isolated_client.get(f"/api/counselor/view/{token}")
+    assert view_res.status_code == 200
+
+    # 3. Revoke link
+    revoke_res = isolated_client.delete("/api/counselor/link", headers=headers)
+    assert revoke_res.status_code == 200
+    assert revoke_res.json()["status"] == "success"
+
+    # 4. Accessing view now returns 403
+    revoked_view = isolated_client.get(f"/api/counselor/view/{token}")
+    assert revoked_view.status_code == 403
+    assert "revoked" in revoked_view.json()["detail"].lower()
+
+
+def test_counselor_link_expiration(isolated_client):
+    """Expired counselor link cannot be accessed."""
+    from datetime import datetime, timedelta, timezone
+    student_id, _, headers = create_test_student_with_token(isolated_client, "Student Expire")
+
+    # Create link
+    create_res = isolated_client.post(
+        "/api/counselor/link",
+        json={"counselor_email": "counselor@school.edu", "language": "en"},
+        headers=headers,
+    )
+    assert create_res.status_code == 200
+    token = create_res.json()["token"]
+
+    # Set expiry in the past
+    db = next(isolated_client.app.dependency_overrides[get_db]())
+    link = db.query(CounselorLink).filter(CounselorLink.token == token).first()
+    link.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    db.commit()
+
+    # Accessing view returns 403
+    view_res = isolated_client.get(f"/api/counselor/view/{token}")
+    assert view_res.status_code == 403
+    assert "expired" in view_res.json()["detail"].lower()

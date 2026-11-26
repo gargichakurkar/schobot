@@ -5,7 +5,7 @@ import {
   scanCertificateDocument,
   uploadStudentDocument,
 } from "../apiClient";
-import { getStudentId } from "../data/profile";
+import { getAuthToken, getStudentId, isAuthenticated } from "../data/profile";
 import "./CertificateScanner.css";
 
 const certificateTypes = [
@@ -46,8 +46,9 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-export default function CertificateScanner() {
+export default function CertificateScanner({ onOpenLogin }) {
   const [activeTab, setActiveTab] = useState("vault"); // "vault" | "scanner"
+  const [authed, setAuthed] = useState(isAuthenticated);
   const studentId = getStudentId();
 
   // Scanner states
@@ -70,10 +71,14 @@ export default function CertificateScanner() {
   const [vaultActionMessage, setVaultActionMessage] = useState("");
 
   const loadVault = () => {
-    if (!studentId) return;
+    const currentId = getStudentId();
+    if (!currentId || !getAuthToken()) {
+      setVaultDocuments([]);
+      return;
+    }
     setIsLoadingVault(true);
     setVaultError("");
-    getStudentDocuments(studentId)
+    getStudentDocuments(currentId)
       .then((data) => {
         setVaultDocuments(data.documents || []);
       })
@@ -86,10 +91,21 @@ export default function CertificateScanner() {
   };
 
   useEffect(() => {
+    const handleAuthChange = () => {
+      setAuthed(isAuthenticated());
+      loadVault();
+    };
+    window.addEventListener("schobot-auth-changed", handleAuthChange);
+    return () => {
+      window.removeEventListener("schobot-auth-changed", handleAuthChange);
+    };
+  }, []);
+
+  useEffect(() => {
     if (activeTab === "vault") {
       loadVault();
     }
-  }, [activeTab, studentId]);
+  }, [activeTab, authed]);
 
   const handleScan = async (event) => {
     event.preventDefault();
@@ -111,8 +127,10 @@ export default function CertificateScanner() {
   };
 
   const handleSaveScannedToVault = async () => {
-    if (!file || !studentId) {
-      setVaultSaveMessage("Please complete or save your profile first so documents can be linked to your account.");
+    const currentId = getStudentId();
+    if (!file || !currentId || !getAuthToken()) {
+      setVaultSaveMessage("Please log in to your student account first to save documents to your vault.");
+      onOpenLogin?.();
       return;
     }
     setIsSavingToVault(true);
@@ -120,7 +138,7 @@ export default function CertificateScanner() {
     try {
       const selectedTypeLabel =
         certificateTypes.find((t) => t.value === certificateType)?.label || "Other Supporting Documents";
-      await uploadStudentDocument(studentId, selectedTypeLabel, file, false);
+      await uploadStudentDocument(currentId, selectedTypeLabel, file, false);
       setVaultSaveMessage("✓ Document saved to My Document Vault! It will now automatically match relevant scholarships.");
     } catch (err) {
       setVaultSaveMessage(`Failed to save: ${err.message}`);
@@ -131,11 +149,16 @@ export default function CertificateScanner() {
 
   const handleDirectVaultUpload = async (e) => {
     e.preventDefault();
-    if (!vaultUploadFile || !studentId) return;
+    const currentId = getStudentId();
+    if (!vaultUploadFile || !currentId || !getAuthToken()) {
+      setVaultActionMessage("Please log in to your student account to upload documents.");
+      onOpenLogin?.();
+      return;
+    }
     setIsUploadingToVault(true);
     setVaultActionMessage("");
     try {
-      await uploadStudentDocument(studentId, uploadCategory, vaultUploadFile, true);
+      await uploadStudentDocument(currentId, uploadCategory, vaultUploadFile, true);
       setVaultActionMessage(`✓ "${vaultUploadFile.name}" successfully uploaded to your Document Vault!`);
       setVaultUploadFile(null);
       // Reset input element
@@ -210,9 +233,17 @@ export default function CertificateScanner() {
       {/* -------------------- TAB 1: DOCUMENT VAULT -------------------- */}
       {activeTab === "vault" && (
         <section className="vault-section">
-          {!studentId ? (
-            <div className="vault-empty-notice">
-              <p>Please complete and save your student profile to create your personal Document Vault.</p>
+          {!studentId || !getAuthToken() ? (
+            <div className="vault-empty-notice vault-auth-card">
+              <h3>Sign In to View Document Vault</h3>
+              <p>Your Document Vault securely holds your verified certificates and automatically matches requirements across scholarship schemes.</p>
+              <button
+                type="button"
+                className="scanner-submit vault-login-trigger-btn"
+                onClick={() => onOpenLogin?.()}
+              >
+                Sign In to Vault
+              </button>
             </div>
           ) : (
             <>

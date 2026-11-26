@@ -46,6 +46,10 @@ class StudentProfile(Base):
     annual_family_income: Mapped[float | None] = mapped_column(Float, nullable=True)
     has_income_certificate: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     profile_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    otp_hash: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    otp_attempts: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

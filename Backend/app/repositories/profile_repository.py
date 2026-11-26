@@ -19,6 +19,13 @@ class ProfileRepository:
     def get_by_id(self, profile_id: str) -> StudentProfile | None:
         return self.db.query(StudentProfile).filter(StudentProfile.id == profile_id).first()
 
+    def get_by_email(self, email: str) -> StudentProfile | None:
+        from sqlalchemy import func
+        clean = (email or "").strip().lower()
+        if not clean:
+            return None
+        return self.db.query(StudentProfile).filter(func.lower(StudentProfile.email) == clean).first()
+
     def update(self, profile: StudentProfile, updates: dict) -> StudentProfile:
         for key, value in updates.items():
             if value is not None:

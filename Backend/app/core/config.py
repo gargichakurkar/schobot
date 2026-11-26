@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "student-documents"
     storage_local_dir: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "noreply@schobot.com"
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

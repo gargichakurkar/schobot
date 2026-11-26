@@ -41,6 +41,7 @@ def test_scenario_1_fully_eligible_student(isolated_client):
         "gender": "Male",
         "annual_family_income": 200000,
         "has_income_certificate": True,
+        "password": "SecurePassword123!",
         "profile_completed": True,
     }
 
@@ -103,6 +104,7 @@ def test_scenario_2_student_failing_income_condition(isolated_client):
         "gender": "Male",
         "annual_family_income": 600000,  # Exceeds max_income
         "has_income_certificate": True,
+        "password": "SecurePassword123!",
         "profile_completed": True,
     }
 
@@ -153,6 +155,7 @@ def test_scenario_3_student_failing_category_condition(isolated_client):
         "gender": "Female",
         "annual_family_income": 200000,
         "has_income_certificate": True,
+        "password": "SecurePassword123!",
         "profile_completed": True,
     }
 
@@ -203,6 +206,7 @@ def test_scenario_4_student_with_missing_domicile_state(isolated_client):
         "gender": "Female",
         "annual_family_income": 200000,
         "has_income_certificate": True,
+        "password": "SecurePassword123!",
         "profile_completed": True,
     }
 
@@ -253,6 +257,7 @@ def test_scenario_5_student_with_unknown_or_unverified_requirements(isolated_cli
         "gender": "Male",
         "annual_family_income": 200000,
         "has_income_certificate": True,
+        "password": "SecurePassword123!",
         "profile_completed": True,
     }
 

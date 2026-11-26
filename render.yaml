@@ -20,6 +20,12 @@ services:
         value: llama3-8b-8192
       - key: CORS_ORIGINS
         value: '["https://schobot.vercel.app","http://localhost:5173","http://127.0.0.1:5173"]'
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: student-documents
 
   - type: cron
     name: schobot-scholarship-sync

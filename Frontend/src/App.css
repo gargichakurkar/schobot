@@ -2488,3 +2488,403 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ========================================================
+   AUTHENTICATION & LOGIN MODAL STYLES
+   ======================================================== */
+
+.sidebar-auth-cta {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgb(255 255 255 / 12%);
+}
+
+.sidebar-login-btn {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #4f46e5;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease, transform 100ms ease;
+}
+
+.sidebar-login-btn:hover {
+  background: #4338ca;
+}
+
+.sidebar-login-btn:active {
+  transform: scale(0.98);
+}
+
+.sidebar-logout-btn {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  color: #9aa6ba;
+  background: transparent;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.sidebar-logout-btn:hover {
+  color: #ff6b6b;
+  background: rgb(255 255 255 / 8%);
+}
+
+.mobile-header-auth {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.mobile-auth-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+
+.mobile-login-btn {
+  background: #4f46e5;
+  color: white;
+}
+
+.mobile-logout-btn {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.session-expired-banner {
+  background: #fef2f2;
+  border-bottom: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 10px 18px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  animation: fadeIn 200ms ease-in;
+}
+
+.session-expired-banner .banner-action-btn {
+  margin-left: auto;
+  background: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-expired-banner .banner-close-btn {
+  background: transparent;
+  border: none;
+  color: #991b1b;
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.profile-auth-status {
+  margin-bottom: 22px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.profile-auth-logged-in {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.profile-auth-logged-out {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+}
+
+.profile-auth-content {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.profile-auth-badge {
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.profile-auth-action-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  transition: opacity 120ms ease;
+}
+
+.profile-auth-action-btn:hover {
+  opacity: 0.8;
+}
+
+/* Modal styles */
+.login-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.login-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+}
+
+.login-modal-card {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  animation: modalPop 180ms ease-out;
+}
+
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.login-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.login-modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.login-modal-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #eef2ff;
+  color: #4f46e5;
+  flex: 0 0 auto;
+}
+
+.login-modal-title-wrap h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.login-modal-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.login-modal-close {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.login-modal-close:hover {
+  color: #0f172a;
+  background: #f1f5f9;
+}
+
+.login-modal-form {
+  padding: 20px 24px 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.login-modal-alert {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.login-modal-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.login-modal-success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #15803d;
+}
+
+.login-modal-field {
+  display: grid;
+  gap: 6px;
+}
+
+.login-modal-field .field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.login-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #0f172a;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.login-input:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+.login-modal-field .field-help {
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+.login-submit-btn {
+  width: 100%;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: #4f46e5;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease, opacity 150ms ease;
+}
+
+.login-submit-btn:hover:not(:disabled) {
+  background: #4338ca;
+}
+
+.login-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.login-modal-footer {
+  text-align: center;
+  font-size: 12.5px;
+  color: #64748b;
+}
+
+.login-modal-footer p {
+  margin: 0;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #4f46e5;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.link-button:hover {
+  color: #3730a3;
+}
+
+.vault-auth-card {
+  padding: 32px 24px;
+  text-align: center;
+  background: #ffffff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+}
+
+.vault-auth-card h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.vault-auth-card p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: #64748b;
+  max-width: 440px;
+  margin-inline: auto;
+}
+
+.vault-login-trigger-btn {
+  display: inline-block;
+  width: auto;
+  min-width: 160px;
+  padding: 10px 20px;
+}

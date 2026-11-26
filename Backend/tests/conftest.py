@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -13,6 +14,14 @@ from app import models  # noqa: F401 - register all model tables on Base
 
 if len(settings.secret_key) < 32:
     settings.secret_key = "test-only-signing-key-with-adequate-length-32-chars"
+
+
+@asynccontextmanager
+async def noop_lifespan(app):
+    yield
+
+
+app.router.lifespan_context = noop_lifespan
 
 
 @pytest.fixture

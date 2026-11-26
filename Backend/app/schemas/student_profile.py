@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from typing import Optional
+from typing_extensions import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StudentProfileBase(BaseModel):
@@ -42,7 +43,32 @@ class StudentProfileBase(BaseModel):
 
 
 class StudentProfileCreate(StudentProfileBase):
-    pass
+    password: str = Field(..., min_length=10, max_length=128)
+
+
+class StudentLoginRequest(BaseModel):
+    identifier: Optional[str] = Field(default=None, max_length=255)
+    email: Optional[str] = Field(default=None, max_length=255)
+    student_id: Optional[str] = Field(default=None, max_length=255)
+    password: str = Field(..., min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> Self:
+        clean_id = (self.identifier or self.email or self.student_id or "").strip()
+        if not clean_id:
+            raise ValueError("Email address, student ID, or identifier is required.")
+        self.identifier = clean_id
+        return self
+
+
+class RequestOTPRequest(BaseModel):
+    identifier: str = Field(..., min_length=1, max_length=255)
+
+
+class VerifyOTPSetPasswordRequest(BaseModel):
+    identifier: str = Field(..., min_length=1, max_length=255)
+    otp: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=10, max_length=128)
 
 
 class StudentProfileUpdate(BaseModel):

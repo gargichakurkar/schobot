@@ -13,7 +13,17 @@ class ProfileService:
         self.repo = ProfileRepository(db)
 
     def create_profile(self, payload: StudentProfileCreate) -> StudentProfile:
+        email = (payload.email or "").strip()
+        if email:
+            existing = self.repo.get_by_email(email)
+            if existing:
+                raise ValueError("An account with this email address already exists. Please sign in or reset your password.")
+
         data = payload.model_dump(exclude_none=True)
+        password = data.pop("password", None)
+        if password:
+            from auth import hash_password
+            data["password_hash"] = hash_password(password)
         return self.repo.create(data)
 
     def get_profile(self, profile_id: str) -> StudentProfile | None:

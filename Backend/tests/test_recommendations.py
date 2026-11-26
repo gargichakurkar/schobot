@@ -20,6 +20,7 @@ def test_submit_and_recommend_creates_profile_and_matches(isolated_client):
         "has_disability_certificate": False,
         "annual_family_income": 180000,
         "has_income_certificate": True,
+        "password": "SecurePassword123!",
         "profile_completed": True,
     }
 
@@ -123,6 +124,7 @@ def test_profile_update_automatically_refreshes_recommendations(isolated_client)
         "gender": "Male",
         "annual_family_income": 150000,
         "has_income_certificate": True,
+        "password": "SecurePassword123!",
         "profile_completed": True,
     }
 
@@ -139,9 +141,13 @@ def test_profile_update_automatically_refreshes_recommendations(isolated_client)
     assert cat_rule_initial["student_value"] == "general"
 
     # Update profile with SC category and 950000 income
+    auth_token = submit.json().get("access_token") or submit.json()["student"].get("access_token")
+    assert auth_token, "Registration response must contain an access token"
+
     update_res = client.put(
         f"/api/profiles/{student_id}",
         json={"category": "SC", "annual_family_income": 950000},
+        headers={"Authorization": f"Bearer {auth_token}"},
     )
     assert update_res.status_code == 200
     assert update_res.json()["category"] == "SC"
