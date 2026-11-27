@@ -1,6 +1,21 @@
 from fastapi.testclient import TestClient
+from datetime import datetime, timedelta, timezone
 
 from app.main import app
+
+
+def _create_otp_student(client, email="otp-regression@example.com"):
+    response = client.post(
+        "/api/profiles",
+        json={
+            "full_name": "OTP Regression Student",
+            "email": email,
+            "password": "InitialPassword123!",
+            "profile_completed": True,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["id"]
 
 
 def test_create_and_get_profile(isolated_client):
@@ -260,6 +275,132 @@ def test_otp_request_and_activation_flow(isolated_client, monkeypatch):
     )
     assert login_res.status_code == 200
     assert login_res.json()["access_token"]
+
+
+def test_otp_delivered_value_succeeds_and_is_not_overwritten(isolated_client, monkeypatch):
+    """The exact value handed to email is the value accepted by verification."""
+    from app.services.email_service import get_email_service
+
+    delivered = []
+    monkeypatch.setattr(get_email_service(), "send_otp_email", lambda to, otp: delivered.append((to, otp)))
+    client = isolated_client
+    student_id = _create_otp_student(client)
+
+    request = client.post("/api/auth/request-otp", json={"identifier": student_id})
+    assert request.status_code == 200
+    assert len(delivered) == 1
+    otp = delivered[0][1]
+
+    verify = client.post(
+        "/api/auth/verify-otp-set-password",
+        json={"identifier": student_id, "otp": otp, "new_password": "NewSecurePassword123!"},
+    )
+    assert verify.status_code == 200
+
+
+def test_otp_leading_zero_succeeds(isolated_client, monkeypatch):
+    from app.routers import profiles
+    from app.services.email_service import get_email_service
+
+    monkeypatch.setattr(profiles.secrets, "randbelow", lambda _: 7)
+    monkeypatch.setattr(get_email_service(), "send_otp_email", lambda to, otp: None)
+    client = isolated_client
+    student_id = _create_otp_student(client, "leading-zero@example.com")
+    assert client.post("/api/auth/request-otp", json={"identifier": student_id}).status_code == 200
+
+    verify = client.post(
+        "/api/auth/verify-otp-set-password",
+        json={"identifier": student_id, "otp": "000007", "new_password": "NewSecurePassword123!"},
+    )
+    assert verify.status_code == 200
+
+
+def test_otp_incorrect_code_fails(isolated_client, monkeypatch):
+    from app.services.email_service import get_email_service
+
+    monkeypatch.setattr(get_email_service(), "send_otp_email", lambda to, otp: None)
+    client = isolated_client
+    student_id = _create_otp_student(client, "incorrect-code@example.com")
+    assert client.post("/api/auth/request-otp", json={"identifier": student_id}).status_code == 200
+
+    verify = client.post(
+        "/api/auth/verify-otp-set-password",
+        json={"identifier": student_id, "otp": "999999", "new_password": "NewSecurePassword123!"},
+    )
+    assert verify.status_code == 400
+    assert "invalid verification code" in verify.json()["detail"].lower()
+
+
+def test_expired_otp_fails(isolated_client, monkeypatch):
+    from app.core.database import get_db
+    from app.models.student_profile import StudentProfile
+    from app.services.email_service import get_email_service
+    from auth import hash_password
+
+    monkeypatch.setattr(get_email_service(), "send_otp_email", lambda to, otp: None)
+    client = isolated_client
+    student_id = _create_otp_student(client, "expired-otp@example.com")
+    assert client.post("/api/auth/request-otp", json={"identifier": student_id}).status_code == 200
+    db = next(client.app.dependency_overrides[get_db]())
+    student = db.query(StudentProfile).filter(StudentProfile.id == student_id).first()
+    student.otp_hash = hash_password("123456")
+    student.otp_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+
+    verify = client.post(
+        "/api/auth/verify-otp-set-password",
+        json={"identifier": student_id, "otp": "123456", "new_password": "NewSecurePassword123!"},
+    )
+    assert verify.status_code == 400
+    assert "expired" in verify.json()["detail"].lower()
+
+
+def test_resend_invalidates_old_otp_and_accepts_newest(isolated_client, monkeypatch):
+    from app.routers import profiles
+    from app.services.email_service import get_email_service
+
+    delivered = []
+    monkeypatch.setattr(profiles, "_OTP_COOLDOWN", 0)
+    monkeypatch.setattr(get_email_service(), "send_otp_email", lambda to, otp: delivered.append(otp))
+    client = isolated_client
+    student_id = _create_otp_student(client, "resend-otp@example.com")
+    assert client.post("/api/auth/request-otp", json={"identifier": student_id}).status_code == 200
+    assert client.post("/api/auth/request-otp", json={"identifier": student_id}).status_code == 200
+    assert len(delivered) == 2
+    assert delivered[0] != delivered[1]
+
+    old = client.post(
+        "/api/auth/verify-otp-set-password",
+        json={"identifier": student_id, "otp": delivered[0], "new_password": "NewSecurePassword123!"},
+    )
+    assert old.status_code == 400
+    newest = client.post(
+        "/api/auth/verify-otp-set-password",
+        json={"identifier": student_id, "otp": delivered[1], "new_password": "NewSecurePassword123!"},
+    )
+    assert newest.status_code == 200
+
+
+def test_otp_identifier_normalization_is_consistent(isolated_client, monkeypatch):
+    from app.services.email_service import get_email_service
+
+    delivered = []
+    monkeypatch.setattr(get_email_service(), "send_otp_email", lambda to, otp: delivered.append(otp))
+    client = isolated_client
+    student_id = _create_otp_student(client, "Mixed.Case@Example.com ")
+    request = client.post("/api/auth/request-otp", json={"identifier": "  MIXED.CASE@EXAMPLE.COM  "})
+    assert request.status_code == 200
+    assert delivered
+    verify = client.post(
+        "/api/auth/verify-otp-set-password",
+        json={
+            "identifier": "  mixed.case@example.com ",
+            "otp": delivered[0],
+            "new_password": "NewSecurePassword123!",
+        },
+    )
+    assert verify.status_code == 200
+    assert student_id == verify.json()["student_id"]
 
 
 def test_otp_request_fails_safely_when_email_unconfigured(isolated_client, monkeypatch):

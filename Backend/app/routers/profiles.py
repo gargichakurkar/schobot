@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,40 @@ _OTP_MAX_PER_WINDOW = 4
 _OTP_COOLDOWN = 15.0  # 15 seconds cooldown between successive clicks
 
 
+def _normalize_identifier(identifier: str) -> str:
+    """Canonicalize identifiers for both OTP endpoints.
+
+    The application supports email addresses and student IDs. Phone numbers are
+    not a stored identifier in the current schema, so they remain unsupported.
+    """
+    return (identifier or "").strip().casefold()
+
+
+def _find_student_by_identifier(db: Session, identifier: str) -> StudentProfile | None:
+    normalized = _normalize_identifier(identifier)
+    if not normalized:
+        return None
+    return db.query(StudentProfile).filter(
+        (func.lower(StudentProfile.id) == normalized)
+        | (func.lower(func.trim(StudentProfile.email)) == normalized)
+    ).first()
+
+
+def _mask_identifier(identifier: str) -> str:
+    normalized = _normalize_identifier(identifier)
+    if "@" in normalized:
+        local, domain = normalized.split("@", 1)
+        return f"{local[:2]}***@{domain}" if len(local) > 2 else f"{local[:1]}***@{domain}"
+    if len(normalized) <= 4:
+        return "***"
+    return f"{normalized[:2]}***{normalized[-2:]}"
+
+
+def _log_otp_failure(identifier: str, reason: str) -> None:
+    # Never include the submitted OTP, stored hash, password, or email contents.
+    logger.warning("OTP verification failed: reason=%s identifier=%s", reason, _mask_identifier(identifier))
+
+
 @router.post("/profiles", response_model=StudentProfileResponse)
 def create_profile(payload: StudentProfileCreate, db: Session = Depends(get_db)) -> StudentProfileResponse:
     if not payload.password:
@@ -59,11 +94,11 @@ def create_profile(payload: StudentProfileCreate, db: Session = Depends(get_db))
 
 @router.post("/auth/token")
 def issue_student_token(payload: StudentLoginRequest, db: Session = Depends(get_db)) -> dict:
-    identifier = (payload.identifier or payload.email or payload.student_id or "").strip()
+    identifier = _normalize_identifier(payload.identifier or payload.email or payload.student_id or "")
     password = payload.password
 
     student = db.query(StudentProfile).filter(
-        (StudentProfile.id == identifier) | (func.lower(StudentProfile.email) == identifier.lower())
+        (func.lower(StudentProfile.id) == identifier) | (func.lower(func.trim(StudentProfile.email)) == identifier)
     ).first()
 
     # Generic credential rejection to prevent account enumeration
@@ -95,7 +130,7 @@ def issue_student_token(payload: StudentLoginRequest, db: Session = Depends(get_
 
 @router.post("/auth/request-otp")
 def request_otp(payload: RequestOTPRequest, request: Request, db: Session = Depends(get_db)) -> dict:
-    identifier = payload.identifier.strip()
+    identifier = _normalize_identifier(payload.identifier)
     if not identifier:
         raise HTTPException(status_code=422, detail="Identifier is required.")
 
@@ -119,14 +154,11 @@ def request_otp(payload: RequestOTPRequest, request: Request, db: Session = Depe
             )
         history.append(now)
 
-    student = db.query(StudentProfile).filter(
-        (StudentProfile.id == identifier) | (func.lower(StudentProfile.email) == identifier.lower())
-    ).first()
+    student = _find_student_by_identifier(db, identifier)
 
     # Account-enumeration protection: return generic response without sending email
     if not student or not student.email:
-        parts = identifier.split("@") if "@" in identifier else [identifier, ""]
-        masked_email = f"{parts[0][:2]}***@{parts[1]}" if len(parts[0]) > 2 and parts[1] else "***"
+        masked_email = _mask_identifier(identifier) if "@" in identifier else "***"
         return {
             "status": "success",
             "message": "If an account exists for this identifier, a verification code has been sent.",
@@ -155,7 +187,7 @@ def request_otp(payload: RequestOTPRequest, request: Request, db: Session = Depe
 
     email_service = get_email_service()
     try:
-        email_service.send_otp_email(student.email, otp)
+        email_service.send_otp_email(student.email.strip(), otp)
     except EmailNotConfiguredError as exc:
         raise HTTPException(
             status_code=503,
@@ -171,8 +203,7 @@ def request_otp(payload: RequestOTPRequest, request: Request, db: Session = Depe
             detail="Failed to deliver verification email. Please try again later or contact support.",
         ) from exc
 
-    parts = student.email.split("@")
-    masked_email = f"{parts[0][:2]}***@{parts[1]}" if len(parts[0]) > 2 else f"{parts[0][:1]}***@{parts[1]}"
+    masked_email = _mask_identifier(student.email)
     return {
         "status": "success",
         "message": "If an account exists for this identifier, a verification code has been sent.",
@@ -182,15 +213,15 @@ def request_otp(payload: RequestOTPRequest, request: Request, db: Session = Depe
 
 @router.post("/auth/verify-otp-set-password")
 def verify_otp_set_password(payload: VerifyOTPSetPasswordRequest, db: Session = Depends(get_db)) -> dict:
-    identifier = payload.identifier.strip()
-    student = db.query(StudentProfile).filter(
-        (StudentProfile.id == identifier) | (func.lower(StudentProfile.email) == identifier.lower())
-    ).first()
+    identifier = _normalize_identifier(payload.identifier)
+    student = _find_student_by_identifier(db, identifier)
 
     if not student:
+        _log_otp_failure(identifier, "account_not_found")
         raise HTTPException(status_code=404, detail="Student profile not found.")
 
     if not student.otp_hash or not student.otp_expires_at:
+        _log_otp_failure(identifier, "missing_otp")
         raise HTTPException(
             status_code=400,
             detail="No pending verification request found for this account. Please request a new code.",
@@ -202,20 +233,28 @@ def verify_otp_set_password(payload: VerifyOTPSetPasswordRequest, db: Session = 
         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
     if expires_at and now_utc > expires_at:
+        _log_otp_failure(identifier, "expired")
         raise HTTPException(
             status_code=400,
             detail="Verification code has expired. Please request a new code.",
         )
 
     if (student.otp_attempts or 0) >= 5:
+        _log_otp_failure(identifier, "attempts_exceeded")
         raise HTTPException(
             status_code=429,
             detail="Too many invalid verification attempts. Please request a new code.",
         )
 
-    if not verify_password(payload.otp.strip(), student.otp_hash):
+    submitted_otp = payload.otp.strip()
+    if not re.fullmatch(r"\d{6}", submitted_otp):
+        _log_otp_failure(identifier, "mismatch")
+        raise HTTPException(status_code=400, detail="Invalid verification code. Please check and try again.")
+
+    if not verify_password(submitted_otp, student.otp_hash):
         student.otp_attempts = (student.otp_attempts or 0) + 1
         db.commit()
+        _log_otp_failure(identifier, "mismatch")
         raise HTTPException(status_code=400, detail="Invalid verification code. Please check and try again.")
 
     # Valid OTP! Update password and clear OTP

@@ -85,7 +85,7 @@ export default function LoginModal({ isOpen, onClose, onSuccess }) {
     const cleanOtp = otp.trim();
     const cleanPass = newPassword.trim();
 
-    if (!cleanOtp) {
+    if (!/^\d{6}$/.test(cleanOtp)) {
       setError("Please enter the 6-digit verification code sent to your email.");
       return;
     }
@@ -300,9 +300,11 @@ export default function LoginModal({ isOpen, onClose, onSuccess }) {
                 value={otp}
                 maxLength={6}
                 onChange={(e) => {
-                  setOtp(e.target.value);
+                  setOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
                   setError("");
                 }}
+                inputMode="numeric"
+                pattern="[0-9]{6}"
                 disabled={isLoading}
                 autoFocus
                 required

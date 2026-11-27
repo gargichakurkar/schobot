@@ -13,13 +13,15 @@ class ProfileService:
         self.repo = ProfileRepository(db)
 
     def create_profile(self, payload: StudentProfileCreate) -> StudentProfile:
-        email = (payload.email or "").strip()
+        email = (payload.email or "").strip().casefold()
         if email:
             existing = self.repo.get_by_email(email)
             if existing:
                 raise ValueError("An account with this email address already exists. Please sign in or reset your password.")
 
         data = payload.model_dump(exclude_none=True)
+        if email:
+            data["email"] = email
         password = data.pop("password", None)
         if password:
             from auth import hash_password
@@ -34,6 +36,8 @@ class ProfileService:
         if profile is None:
             raise ValueError("Student profile not found")
         updates = payload.model_dump(exclude_none=True)
+        if "email" in updates:
+            updates["email"] = (updates["email"] or "").strip().casefold() or None
         updated_profile = self.repo.update(profile, updates)
 
         from app.services.matching_service import MatchingService

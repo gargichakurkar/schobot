@@ -195,11 +195,12 @@ export async function requestOTP(identifier) {
 
 export async function verifyOTPAndSetPassword({ identifier, otp, newPassword }) {
   const cleanId = (identifier || "").trim();
-  const cleanOtp = (otp || "").trim();
+  // Keep OTPs as strings so codes beginning with zero are never coerced.
+  const cleanOtp = String(otp ?? "").trim();
   const cleanPassword = (newPassword || "").trim();
 
   if (!cleanId) throw new Error("Identifier is required.");
-  if (!cleanOtp) throw new Error("Verification code is required.");
+  if (!/^\d{6}$/.test(cleanOtp)) throw new Error("Verification code must be exactly 6 digits.");
   if (!cleanPassword || cleanPassword.length < 10) {
     throw new Error("New password must be at least 10 characters.");
   }
