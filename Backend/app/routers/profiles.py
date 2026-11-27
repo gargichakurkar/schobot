@@ -161,7 +161,7 @@ def request_otp(payload: RequestOTPRequest, request: Request, db: Session = Depe
             status_code=503,
             detail=(
                 "Email delivery service is not configured on this server. "
-                "SMTP configuration (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD) must be provided in Render environment variables."
+                "Resend API configuration (RESEND_API_KEY, RESEND_FROM_EMAIL) must be provided in Render environment variables."
             ),
         ) from exc
     except Exception as exc:

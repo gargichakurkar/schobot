@@ -263,11 +263,9 @@ def test_otp_request_and_activation_flow(isolated_client, monkeypatch):
 
 
 def test_otp_request_fails_safely_when_email_unconfigured(isolated_client, monkeypatch):
-    """When SMTP is not configured, requesting OTP returns 503 and does not claim email sent."""
+    """When Resend is not configured, requesting OTP returns 503 and does not claim email sent."""
     from app.core.config import settings
-    monkeypatch.setattr(settings, "smtp_host", None)
-    monkeypatch.setattr(settings, "smtp_user", None)
-    monkeypatch.setattr(settings, "smtp_password", None)
+    monkeypatch.setattr(settings, "resend_api_key", "")
 
     client = isolated_client
     payload = {
@@ -283,6 +281,67 @@ def test_otp_request_fails_safely_when_email_unconfigured(isolated_client, monke
     res = client.post("/api/auth/request-otp", json={"identifier": student_id})
     assert res.status_code == 503
     assert "not configured" in res.json()["detail"].lower()
+    assert "resend" in res.json()["detail"].lower()
+
+
+def test_resend_send_otp_email_success_with_mocked_http(monkeypatch):
+    """Verify Resend HTTPS API sends payload to https://api.resend.com/emails with Bearer auth."""
+    import httpx
+    from app.core.config import settings
+    from app.services.email_service import get_email_service
+
+    monkeypatch.setattr(settings, "resend_api_key", "re_test_mock_secret_key_123")
+    monkeypatch.setattr(settings, "resend_from_email", "Schobot <verify@schobot.com>")
+
+    captured_requests = []
+
+    def mock_post(self, url, json=None, headers=None, **kwargs):
+        captured_requests.append({"url": url, "json": json, "headers": headers})
+        # Mock successful Resend response
+        request = httpx.Request("POST", url)
+        return httpx.Response(200, json={"id": "re_msg_mock_id_999"}, request=request)
+
+    monkeypatch.setattr(httpx.Client, "post", mock_post)
+
+    email_service = get_email_service()
+    assert email_service.is_configured is True
+    result = email_service.send_otp_email("student@example.com", "849201")
+    assert result is True
+
+    assert len(captured_requests) == 1
+    req = captured_requests[0]
+    assert req["url"] == "https://api.resend.com/emails"
+    assert req["headers"]["Authorization"] == "Bearer re_test_mock_secret_key_123"
+    assert req["headers"]["Content-Type"] == "application/json"
+    assert req["json"]["to"] == ["student@example.com"]
+    assert req["json"]["from"] == "Schobot <verify@schobot.com>"
+    assert "849201" in req["json"]["subject"]
+    assert "849201" in req["json"]["text"]
+    assert "849201" in req["json"]["html"]
+
+
+def test_resend_send_otp_email_http_error_handled_cleanly(monkeypatch):
+    """Verify Resend HTTP 422/401 errors raise RuntimeError without leaking sensitive keys."""
+    import httpx
+    import pytest
+    from app.core.config import settings
+    from app.services.email_service import get_email_service
+
+    monkeypatch.setattr(settings, "resend_api_key", "re_test_mock_secret_key_123")
+
+    def mock_post_fail(self, url, json=None, headers=None, **kwargs):
+        request = httpx.Request("POST", url)
+        return httpx.Response(422, json={"message": "Domain not verified"}, request=request)
+
+    monkeypatch.setattr(httpx.Client, "post", mock_post_fail)
+
+    email_service = get_email_service()
+    with pytest.raises(RuntimeError) as exc_info:
+        email_service.send_otp_email("student@example.com", "849201")
+
+    assert "HTTP 422" in str(exc_info.value)
+    # Ensure api key was never placed in exception message
+    assert "re_test_mock_secret_key_123" not in str(exc_info.value)
 
 
 def test_otp_request_unknown_account_returns_generic_response(isolated_client, monkeypatch):
@@ -300,20 +359,20 @@ def test_otp_request_unknown_account_returns_generic_response(isolated_client, m
     assert len(email_sent) == 0  # No email sent for unknown user
 
 
-def test_otp_request_smtp_failure_returns_generic_error(isolated_client, monkeypatch):
-    """When SMTP delivery raises an internal exception, return generic 500 without exposing raw exception details."""
+def test_otp_request_email_failure_returns_generic_error(isolated_client, monkeypatch):
+    """When email delivery raises an internal exception, return generic 500 without exposing raw exception details."""
     from app.services.email_service import get_email_service
     email_service = get_email_service()
 
     def mock_send_fail(to, otp):
-        raise RuntimeError("CRITICAL_INTERNAL_SMTP_CREDENTIAL_OR_SOCKET_ERROR")
+        raise RuntimeError("CRITICAL_INTERNAL_RESEND_API_OR_SOCKET_ERROR")
 
     monkeypatch.setattr(email_service, "send_otp_email", mock_send_fail)
 
     client = isolated_client
     payload = {
-        "full_name": "SMTP Fail Student",
-        "email": "smtpfail@example.com",
+        "full_name": "Email Fail Student",
+        "email": "emailfail@example.com",
         "password": "Password12345!",
         "profile_completed": True,
     }
@@ -322,7 +381,7 @@ def test_otp_request_smtp_failure_returns_generic_error(isolated_client, monkeyp
 
     res = client.post("/api/auth/request-otp", json={"identifier": student_id})
     assert res.status_code == 500
-    assert "CRITICAL_INTERNAL_SMTP" not in res.json()["detail"]
+    assert "CRITICAL_INTERNAL_RESEND" not in res.json()["detail"]
     assert "failed to deliver verification email" in res.json()["detail"].lower()
 
 

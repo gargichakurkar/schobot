@@ -26,6 +26,10 @@ services:
         sync: false
       - key: SUPABASE_STORAGE_BUCKET
         value: student-documents
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        value: "Schobot <onboarding@resend.dev>"
 
   - type: cron
     name: schobot-scholarship-sync

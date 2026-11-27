@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "student-documents"
     storage_local_dir: str = ""
+    resend_api_key: str = ""
+    resend_from_email: str = "Schobot <onboarding@resend.dev>"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
